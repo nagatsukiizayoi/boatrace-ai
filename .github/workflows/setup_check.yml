@@ -1,11 +1,10 @@
 name: Level 1 Setup Check
 
-on:
+'on':
   workflow_dispatch:
 
-  permissions:
-    contents: read
-
+permissions:
+  contents: read
 
         jobs:
           setup-check:
