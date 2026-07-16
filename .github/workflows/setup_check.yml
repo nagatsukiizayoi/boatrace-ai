@@ -6,9 +6,6 @@ on:
   permissions:
     contents: read
 
-    concurrency:
-      group: boatrace-ai-level1
-        cancel-in-progress: false
 
         jobs:
           setup-check:
