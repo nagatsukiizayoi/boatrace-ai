@@ -6,7 +6,8 @@ from pathlib import Path
 import pandas as pd
 
 FW_TRANS=str.maketrans("０１２３４５６７８９Ｒｒ＃","0123456789Rr#")
-RESULT_PATTERN=re.compile(r"^\s*(?P<finish_raw>\S+)\s+(?P<boat_no>[1-6])\s+(?P<racer_id>\d{4})\s+(?P<racer_name_result>.+?)\s+(?P<motor_no_result>\d{1,2})\s+(?P<boat_no_equipment_result>\d{1,2})\s+(?P<exhibition_time>\d\.\d{2})\s+(?P<course>[1-6])\s+(?P<start_timing_raw>\S+)\s+(?P<race_time_raw>.+?)\s*$")
+RESULT_PATTERN=re.compile(r"^\s*(?P<finish_raw>\S+)\s+(?P<boat_no>[1-6])\s+(?P<racer_id>\d{4})\s+(?P<racer_name_result>.+?)\s+(?P<motor_no_result>\d{1,2})\s+(?P<boat_no_equipment_result>\d{1,3})\s+(?P<exhibition_time>\d\.\d{2})\s+(?P<course>[1-6])\s+(?P<start_timing_raw>\S+)\s+(?P<race_time_raw>.+?)\s*$")
+SPECIAL_RESULT_PATTERN=re.compile(r"^\s*(?P<finish_raw>K\d?)\s+(?P<boat_no>[1-6])\s+(?P<racer_id>\d{4})\s+(?P<racer_name_result>.+?)\s+(?P<motor_no_result>\d{1,2})\s+(?P<boat_no_equipment_result>\d{1,3})\s+(?P<exhibition_time>\S+)\s+(?P<course>\S+)\s+(?P<start_timing_raw>\S+)\s+(?P<race_time_raw>.+?)\s*$",re.IGNORECASE)
 VENUE_PATTERN=re.compile(r"^\s*(?P<venue_code>\d{2})KBGN\s*$",re.IGNORECASE)
 RACE_PATTERN=re.compile(r"^\s*(?P<race_no>\d{1,2})R\s+.*H1800m",re.IGNORECASE)
 CANDIDATE_PATTERN=re.compile(r"^\s*(?:0[1-6]|[1-6]|F|L\d?|K\d?|S\d?)\s+[1-6]\s+\d{4}\s+",re.IGNORECASE)
@@ -57,7 +58,7 @@ def parse_result_text(text,race_date=None,source_file="result.txt",strict=True,v
                 current_race=race_number
         if CANDIDATE_PATTERN.match(line) is None:
             continue
-        result_match=RESULT_PATTERN.match(line)
+        result_match=RESULT_PATTERN.match(line) or SPECIAL_RESULT_PATTERN.match(line)
         if result_match is None or current_venue is None or current_race is None:
             unmatched.append((line_number,original_line))
             continue
@@ -76,9 +77,10 @@ def parse_result_text(text,race_date=None,source_file="result.txt",strict=True,v
     frame["racer_name_result"]=frame["racer_name_result"].astype("string").map(normalize_name)
     frame["finish_raw"]=frame["finish_raw"].astype("string").str.strip().str.upper()
     frame["racer_id"]=frame["racer_id"].astype("string").str.strip().str.zfill(4)
-    for column in ["race_no","boat_no","motor_no_result","boat_no_equipment_result","course"]:
+    for column in ["race_no","boat_no","motor_no_result","boat_no_equipment_result"]:
         frame[column]=pd.to_numeric(frame[column],errors="raise").astype("int64")
-    frame["exhibition_time"]=pd.to_numeric(frame["exhibition_time"],errors="raise").astype("float64")
+    frame["course"]=pd.to_numeric(frame["course"],errors="coerce").astype("Int64")
+    frame["exhibition_time"]=pd.to_numeric(frame["exhibition_time"],errors="coerce").astype("Float64")
     positions=[int(value) if re.fullmatch(r"0?[1-6]",str(value)) else pd.NA for value in frame["finish_raw"]]
     frame["finish_position"]=pd.Series(positions,index=frame.index,dtype="Int64")
     frame=frame[OUTPUT_COLUMNS].reset_index(drop=True)

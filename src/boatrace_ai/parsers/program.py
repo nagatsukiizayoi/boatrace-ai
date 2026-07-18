@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 FW_TRANS=str.maketrans("０１２３４５６７８９Ｒｒ＃","0123456789Rr#")
-PROGRAM_PATTERN=re.compile(r"^(?P<boat_no>[1-6])\s(?P<racer_id>\d{4})(?P<racer_name>.{4})(?P<age>\d{2})(?P<branch>.{2})(?P<weight_kg>\d{2})(?P<class>[AB][12])\s*(?P<national_win_rate>\d\.\d{2})\s*(?P<national_place2_rate_pct>\d{1,3}\.\d{2})\s*(?P<local_win_rate>\d\.\d{2})\s*(?P<local_place2_rate_pct>\d{1,3}\.\d{2})\s*(?P<motor_no>\d{1,2})\s*(?P<motor_place2_rate_pct>\d{1,3}\.\d{2})\s*(?P<boat_no_equipment>\d{1,2})\s*(?P<boat_place2_rate_pct>\d{1,3}\.\d{2})(?P<series_results_raw>.*)$")
+PROGRAM_PATTERN=re.compile(r"^(?P<boat_no>[1-6])\s(?P<racer_id>\d{4})(?P<racer_name>.{4})(?P<age>\d{2})(?P<branch>.{2})(?P<weight_kg>\d{2})(?P<class>[AB][12])\s*(?P<national_win_rate>\d\.\d{2})\s*(?P<national_place2_rate_pct>\d{1,3}\.\d{2})\s*(?P<local_win_rate>\d\.\d{2})\s*(?P<local_place2_rate_pct>\d{1,3}\.\d{2})\s*(?P<motor_no>\d{1,2})\s*(?P<motor_place2_rate_pct>\d{1,3}\.\d{2})\s*(?P<boat_no_equipment>\d{1,3})\s*(?P<boat_place2_rate_pct>\d{1,3}\.\d{2})(?P<series_results_raw>.*)$")
 VENUE_PATTERN=re.compile(r"^\s*(?P<venue_code>\d{2})BBGN\s*$",re.IGNORECASE)
 RACE_PATTERN=re.compile(r"^\s*(?P<race_no>\d{1,2})R\s+",re.IGNORECASE)
 CANDIDATE_PATTERN=re.compile(r"^[1-6]\s\d{4}")
