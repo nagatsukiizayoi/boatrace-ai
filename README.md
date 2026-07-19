@@ -110,3 +110,24 @@ Current stable commit:
 - CAPTCHA、ログイン制限、有料情報などの回避は行いません。
 - 予測精度や将来の利益は保証されません。
 - データ形式変更や品質異常を検出した場合は、安全側に停止します。
+
+## Payout ETL v1 Draft
+
+Payout parsing and daily ETL integration are implemented on the `feat/payout-etl-v1` development branch.
+
+- Supported bet types: WIN, PLACE, EXACTA, QUINELLA, QUINELLA_PLACE, TRIFECTA and TRIO
+- Supported statuses: NORMAL, SPECIAL_PAYOUT, NOT_ESTABLISHED, CANCELLED and REFUND
+- Daily output: `curated/payouts/YYYY/MM/DD/race_payouts.parquet`
+- Daily payout quality metrics are included in `quality.json`
+- Automated tests: 28 passed
+- June 2026 validation: all 30 days succeeded
+- Payout records: 46,687
+- Payout groups: 32,844
+- Cancelled races: 71, represented by 497 cancelled payout groups
+- Missing, unexpected and duplicate payout groups: 0
+
+Schema documentation:
+
+- [Payout Schema v1 Draft](docs/payout_schema_v1_draft.md)
+
+The full-month validation artifacts are stored separately from production data under the Google Drive validation area. Production regeneration and GitHub registration are performed only after final review.
