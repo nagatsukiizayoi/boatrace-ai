@@ -5,6 +5,7 @@ def test_build_output_paths(tmp_path):
     paths=build_output_paths("2026-06-30",tmp_path)
     assert paths["program"]==tmp_path/"curated"/"entries"/"2026"/"06"/"30"/"program_entries.parquet"
     assert paths["result"]==tmp_path/"curated"/"results"/"2026"/"06"/"30"/"race_results.parquet"
+    assert paths["payout"]==tmp_path/"curated"/"payouts"/"2026"/"06"/"30"/"race_payouts.parquet"
     assert paths["merged"]==tmp_path/"curated"/"races"/"2026"/"06"/"30"/"program_result_merged.parquet"
     assert paths["quality"]==tmp_path/"curated"/"races"/"2026"/"06"/"30"/"quality.json"
 
