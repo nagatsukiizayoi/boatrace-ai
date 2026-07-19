@@ -76,6 +76,9 @@ def process_daily_files(program_file,result_file,race_date,data_root,overwrite=F
     program_df=parse_program_file(program_file,race_date=race_date_iso)
     result_df=parse_result_file(result_file,race_date=race_date_iso)
     payout_df=parse_payout_file(result_file,race_date=race_date_iso)
+    scheduled_race_keys=race_key_set(program_df)
+    payout_unscheduled_cancelled_mask=payout_df.apply(lambda row: str(row["payout_status"])=="CANCELLED" and (str(row["race_date"]),str(row["venue_code"]),int(row["race_no"])) not in scheduled_race_keys,axis=1)
+    payout_df=payout_df.loc[~payout_unscheduled_cancelled_mask].reset_index(drop=True)
     program_duplicates=int(program_df.duplicated(JOIN_KEYS).sum())
     result_duplicates=int(result_df.duplicated(JOIN_KEYS).sum())
     if program_duplicates or result_duplicates:

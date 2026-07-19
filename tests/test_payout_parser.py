@@ -89,3 +89,5 @@ def test_payout_file_cp932(tmp_path):
     assert frame.iloc[0]["bet_type"]=="WIN"
     assert int(frame.iloc[0]["payout_yen"])==5920
     assert frame.iloc[0]["source_file"]=="K260601.TXT"
+
+def test_venue_unavailable_generates_all_races_cancelled(): text="\n".join(["13KBGN","ボートレース尼崎","データは、この場の全レース終了後に登録されます。","13KEND"]); frame=parse_payout_text(text,race_date="2026-05-16",source_file="K260516.TXT"); assert len(frame)==84; assert set(frame["venue_code"])=={"13"}; assert set(frame["race_no"])==set(range(1,13)); assert frame["bet_type"].nunique()==7; assert set(frame["payout_status"])=={"CANCELLED"}; assert set(frame["source_kind"])=={"SUMMARY"}; assert frame["combination"].isna().all()

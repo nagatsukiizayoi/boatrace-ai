@@ -7,7 +7,7 @@ import pandas as pd
 
 FW_TRANS=str.maketrans("０１２３４５６７８９Ｒｒ＃","0123456789Rr#")
 RESULT_PATTERN=re.compile(r"^\s*(?P<finish_raw>\S+)\s+(?P<boat_no>[1-6])\s+(?P<racer_id>\d{4})\s+(?P<racer_name_result>.+?)\s+(?P<motor_no_result>\d{1,2})\s+(?P<boat_no_equipment_result>\d{1,3})\s+(?P<exhibition_time>\d\.\d{2})\s+(?P<course>[1-6])\s+(?P<start_timing_raw>\S+)\s+(?P<race_time_raw>.+?)\s*$")
-SPECIAL_RESULT_PATTERN=re.compile(r"^\s*(?P<finish_raw>K\d?)\s+(?P<boat_no>[1-6])\s+(?P<racer_id>\d{4})\s+(?P<racer_name_result>.+?)\s+(?P<motor_no_result>\d{1,2})\s+(?P<boat_no_equipment_result>\d{1,3})\s+(?P<exhibition_time>\S+)\s+(?P<course>\S+)\s+(?P<start_timing_raw>\S+)\s+(?P<race_time_raw>.+?)\s*$",re.IGNORECASE)
+SPECIAL_RESULT_PATTERN=re.compile(r"^\s*(?P<finish_raw>(?:F|[KLS]\d?))\s+(?P<boat_no>[1-6])\s+(?P<racer_id>\d{4})\s+(?P<racer_name_result>.+?)\s+(?P<motor_no_result>\d{1,2})\s+(?P<boat_no_equipment_result>\d{1,3})\s+(?P<exhibition_time>\S+)\s+(?P<course>\S+)\s+(?P<start_timing_raw>\S+)\s+(?P<race_time_raw>.+?)\s*$",re.IGNORECASE)
 VENUE_PATTERN=re.compile(r"^\s*(?P<venue_code>\d{2})KBGN\s*$",re.IGNORECASE)
 RACE_PATTERN=re.compile(r"^\s*(?P<race_no>\d{1,2})R\s+.*H\d{4}m",re.IGNORECASE)
 CANDIDATE_PATTERN=re.compile(r"^\s*(?:00|0[1-6]|[1-6]|F|L\d?|K\d?|S\d?)\s+[1-6]\s+\d{4}\s+",re.IGNORECASE)

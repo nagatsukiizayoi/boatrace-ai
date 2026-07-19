@@ -18,6 +18,7 @@ ORDERED_BET_TYPES = {"EXACTA","TRIFECTA"}
 VENUE_PATTERN = re.compile(r"^\s*(?P<venue_code>\d{2})KBGN\s*$",re.IGNORECASE)
 RACE_PATTERN = re.compile(r"^\s*(?P<race_no>\d{1,2})R\s+.*H\d{4}m",re.IGNORECASE)
 CANCELLED_SUMMARY_PATTERN = re.compile(r"^\s*(?P<race_no>\d{1,2})R\s+中\s*止\s*$")
+VENUE_UNAVAILABLE_PATTERN = re.compile(r"データは、この場の全レース終了後に登録されます。")
 BET_PATTERN = re.compile(r"^\s*(?P<bet_type>単勝|複勝|2連単|2連複|拡連複|3連単|3連複)\s+(?P<payload>.+?)\s*$")
 COMBINATION_PATTERN = re.compile(r"(?P<combination>[1-6](?:-[1-6]){1,2})\s+(?P<payout>\d+)\s+人気\s+(?P<popularity>\d+)")
 SIMPLE_PATTERN = re.compile(r"(?P<combination>[1-6])\s+(?P<payout>\d+)")
@@ -75,6 +76,13 @@ def parse_payout_text(text,race_date=None,source_file="result.txt",strict=True):
                 current_race=None
                 current_bet=None
                 in_summary=False
+            continue
+        if VENUE_UNAVAILABLE_PATTERN.search(line) is not None and current_venue is not None:
+            for race_number in range(1,13):
+                cancelled_races[(current_venue,race_number)]=line_number
+            current_race=None
+            current_bet=None
+            in_summary=False
             continue
         if "[払戻金]" in line:
             in_summary=True
