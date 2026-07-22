@@ -19,3 +19,9 @@ __all__ = [
     "assert_payout_semantics",
     "audit_payout_semantics",
 ]
+
+from .period import (
+    PeriodAuditError,
+    assert_period_audit,
+    audit_period,
+)
