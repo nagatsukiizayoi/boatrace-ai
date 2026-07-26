@@ -815,10 +815,16 @@ def build_pre_night_program_parquet(
             or manifest_exists
         )
     ):
-        return validate_existing_output(
-            paths,
-            metadata,
+        cached_output = validate_existing_output(
+                    paths,
+                    metadata,
+                )
+        _validate_pipeline_pit_eligibility(
+            cached_output["manifest"],
+            race_date=date_value.isoformat(),
+            as_of_time=metadata["as_of_time"],
         )
+        return cached_output
 
     paths["directory"].mkdir(
         parents=True,
@@ -855,6 +861,14 @@ def build_pre_night_program_parquet(
 
     pit = validate_point_in_time_frame(
         output
+    )
+    eligibility_decision = evaluate_pre_night_pit_eligibility(
+        race_date=date_value.isoformat(),
+        as_of_time=metadata["as_of_time"],
+        details={
+            "future_source_rows": pit["future_source_rows"],
+            "provenance_null_count": pit["provenance_null_count"],
+        },
     )
 
     atomic_write_parquet(
@@ -949,6 +963,14 @@ def build_pre_night_program_parquet(
             generated_at.isoformat()
         ),
     }
+    manifest.update(
+        _pit_manifest_fields(eligibility_decision)
+    )
+    _validate_pipeline_pit_eligibility(
+        manifest,
+        race_date=date_value.isoformat(),
+        as_of_time=metadata["as_of_time"],
+    )
 
     atomic_write_json(
         manifest,
@@ -962,3 +984,142 @@ def build_pre_night_program_parquet(
         "pit": pit,
         "skipped": False,
     }
+
+# BEGIN PRE_NIGHT_PIT_SAFETY_GATE_V1_INTEGRATION
+from boatrace_ai.pipelines.pre_night_eligibility import (
+    PreNightEligibilityDecision,
+    decision_from_exception,
+    eligible_decision,
+)
+
+
+def evaluate_pre_night_pit_eligibility(
+    *,
+    race_date: str,
+    as_of_time: str,
+    validation_error: BaseException | None = None,
+    details: dict[str, object] | None = None,
+) -> PreNightEligibilityDecision:
+    """Expose snapshot validation as an explicit PIT decision.
+
+    Existing validators remain authoritative. Call this helper with no
+    error only after those validators have completed successfully.
+    """
+
+    if validation_error is None:
+        return eligible_decision(
+            race_date=race_date,
+            as_of_time=as_of_time,
+            details={} if details is None else details,
+        )
+
+    return decision_from_exception(
+        validation_error,
+        race_date=race_date,
+        as_of_time=as_of_time,
+        details={} if details is None else details,
+    )
+# END PRE_NIGHT_PIT_SAFETY_GATE_V1_INTEGRATION
+
+
+# PRE_NIGHT_PIT_SAFETY_GATE_AST_RETRY_SNAPSHOT_V1
+from boatrace_ai.pipelines.pre_night_eligibility import (
+    PreNightEligibilityDecision as _PitDecision,
+    manifest_eligibility_fields as _pit_manifest_fields,
+)
+
+
+def _validate_pipeline_pit_eligibility(
+    manifest,
+    *,
+    race_date,
+    as_of_time,
+):
+    """Strictly validate the four serialized PIT eligibility fields."""
+
+    if not isinstance(manifest, dict):
+        raise PreNightOutputIntegrityError(
+            "Pipeline manifest must be a dict"
+        )
+
+    required = {
+        "eligibility_status",
+        "eligible_for_pre_night",
+        "eligibility_reason",
+        "pit_eligibility",
+    }
+
+    missing = required - set(manifest)
+    if missing:
+        raise PreNightOutputIntegrityError(
+            "Pipeline manifest eligibility fields missing: "
+            f"{sorted(missing)}"
+        )
+
+    nested = manifest.get("pit_eligibility")
+    if not isinstance(nested, dict):
+        raise PreNightOutputIntegrityError(
+            "Pipeline pit_eligibility must be a dict"
+        )
+
+    nested_required = {
+        "status",
+        "eligible",
+        "reason",
+        "race_date",
+        "as_of_time",
+    }
+
+    nested_missing = nested_required - set(nested)
+    if nested_missing:
+        raise PreNightOutputIntegrityError(
+            "Pipeline nested eligibility fields missing: "
+            f"{sorted(nested_missing)}"
+        )
+
+    if not isinstance(
+        manifest.get("eligible_for_pre_night"),
+        bool,
+    ):
+        raise PreNightOutputIntegrityError(
+            "Pipeline eligible_for_pre_night must be bool"
+        )
+
+    if not isinstance(nested.get("eligible"), bool):
+        raise PreNightOutputIntegrityError(
+            "Pipeline nested eligible must be bool"
+        )
+
+    try:
+        decision = _PitDecision(
+            status=nested["status"],
+            eligible=nested["eligible"],
+            reason=nested["reason"],
+            race_date=nested["race_date"],
+            as_of_time=nested["as_of_time"],
+            details=nested.get("details", {}),
+        )
+        expected = _pit_manifest_fields(decision)
+    except Exception as exc:
+        raise PreNightOutputIntegrityError(
+            "Pipeline PIT eligibility decision is invalid"
+        ) from exc
+
+    for field_name in sorted(required):
+        if manifest.get(field_name) != expected[field_name]:
+            raise PreNightOutputIntegrityError(
+                "Pipeline PIT eligibility mismatch: "
+                f"{field_name}"
+            )
+
+    if str(nested["race_date"]) != str(race_date):
+        raise PreNightOutputIntegrityError(
+            "Pipeline PIT eligibility race_date mismatch"
+        )
+
+    if str(nested["as_of_time"]) != str(as_of_time):
+        raise PreNightOutputIntegrityError(
+            "Pipeline PIT eligibility as_of_time mismatch"
+        )
+
+    return expected
