@@ -533,3 +533,271 @@ def test_cached_execution_rejects_pipeline_pit_divergence(
             pipeline=pipeline,
             now_fn=lambda: AFTER_AS_OF,
         )
+
+
+# BEGIN PRE_NIGHT_PROSPECTIVE_DATASET_V1_TESTS
+
+
+def _prospective_files(root):
+    directory = (
+        Path(root)
+        / "manifests"
+        / "pre_night_prospective_v1"
+        / RACE_DATE.isoformat()
+    )
+    return (
+        sorted(directory.glob("*.json"))
+        if directory.exists()
+        else []
+    )
+
+
+def test_prospective_dry_run_calls_no_new_dependencies(
+    tmp_path,
+):
+    calls = {
+        "revision": 0,
+        "writer": 0,
+        "validator": 0,
+    }
+
+    def revision_provider():
+        calls["revision"] += 1
+        return "a" * 40
+
+    def writer(*args, **kwargs):
+        calls["writer"] += 1
+        pytest.fail("writer must not run")
+
+    def validator(*args, **kwargs):
+        calls["validator"] += 1
+        pytest.fail("validator must not run")
+
+    result = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=True,
+        now_fn=lambda: BEFORE_AS_OF,
+        repository_commit_provider=revision_provider,
+        prospective_writer=writer,
+        prospective_validator=validator,
+    )
+
+    assert result["dry_run"] is True
+    assert calls == {
+        "revision": 0,
+        "writer": 0,
+        "validator": 0,
+    }
+    assert _prospective_files(tmp_path) == []
+
+
+def test_live_run_creates_and_returns_prospective_manifest(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+
+    result = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=False,
+        collector=collector,
+        pipeline=pipeline,
+        now_fn=lambda: BEFORE_AS_OF,
+        repository_commit_provider=lambda: "a" * 40,
+    )
+
+    assert result["cached"] is False
+    assert "prospective_manifest" in result
+    assert result["prospective_manifest"]["cached"] is True
+
+    files = _prospective_files(tmp_path)
+    assert len(files) == 1
+
+    payload = json.loads(
+        files[0].read_text(encoding="utf-8")
+    )
+    assert payload["repository_commit"] == "a" * 40
+    assert payload["eligible_for_pre_night"] is True
+    assert payload["pit_eligibility"]["status"] == "ELIGIBLE"
+
+
+def test_cached_run_validates_prospective_without_calls(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+
+    first = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=False,
+        collector=collector,
+        pipeline=pipeline,
+        now_fn=lambda: BEFORE_AS_OF,
+        repository_commit_provider=lambda: "a" * 40,
+    )
+
+    second = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=False,
+        collector=collector,
+        pipeline=pipeline,
+        now_fn=lambda: AFTER_AS_OF,
+        repository_commit_provider=lambda: "a" * 40,
+    )
+
+    assert first["cached"] is False
+    assert second["cached"] is True
+    assert second["collector_called"] is False
+    assert second["pipeline_called"] is False
+    assert second["prospective_manifest"]["cached"] is True
+    assert calls == {"collector": 1, "pipeline": 1}
+
+
+def test_cached_execution_without_prospective_fails_closed(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+
+    pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=False,
+        collector=collector,
+        pipeline=pipeline,
+        now_fn=lambda: BEFORE_AS_OF,
+        repository_commit_provider=lambda: "a" * 40,
+    )
+
+    files = _prospective_files(tmp_path)
+    assert len(files) == 1
+    files[0].unlink()
+
+    with pytest.raises(
+        pre_night_daily.PreNightDailyIntegrityError,
+        match="PROSPECTIVE_MANIFEST_MISSING",
+    ):
+        pre_night_daily.run_pre_night_daily(
+            RACE_DATE,
+            tmp_path,
+            dry_run=False,
+            collector=collector,
+            pipeline=pipeline,
+            now_fn=lambda: AFTER_AS_OF,
+            repository_commit_provider=lambda: "a" * 40,
+        )
+
+    assert _prospective_files(tmp_path) == []
+    assert calls == {"collector": 1, "pipeline": 1}
+
+
+def test_cached_tampered_prospective_fails_closed(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+
+    pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=False,
+        collector=collector,
+        pipeline=pipeline,
+        now_fn=lambda: BEFORE_AS_OF,
+        repository_commit_provider=lambda: "a" * 40,
+    )
+
+    prospective_path = _prospective_files(tmp_path)[0]
+    payload = json.loads(
+        prospective_path.read_text(encoding="utf-8")
+    )
+    payload["repository_commit"] = "b" * 40
+    prospective_path.write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        pre_night_daily.PreNightDailyIntegrityError,
+        match="prospective",
+    ):
+        pre_night_daily.run_pre_night_daily(
+            RACE_DATE,
+            tmp_path,
+            dry_run=False,
+            collector=collector,
+            pipeline=pipeline,
+            now_fn=lambda: AFTER_AS_OF,
+            repository_commit_provider=lambda: "a" * 40,
+        )
+
+    assert calls == {"collector": 1, "pipeline": 1}
+
+
+def test_prospective_writer_failure_prevents_success_return(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+
+    from boatrace_ai.pipelines.pre_night_prospective import (
+        PreNightProspectiveIntegrityError,
+    )
+
+    def failing_writer(*args, **kwargs):
+        raise PreNightProspectiveIntegrityError(
+            "injected prospective write failure"
+        )
+
+    with pytest.raises(
+        pre_night_daily.PreNightDailyIntegrityError,
+        match="Prospective manifest creation failed",
+    ):
+        pre_night_daily.run_pre_night_daily(
+            RACE_DATE,
+            tmp_path,
+            dry_run=False,
+            collector=collector,
+            pipeline=pipeline,
+            now_fn=lambda: BEFORE_AS_OF,
+            repository_commit_provider=lambda: "a" * 40,
+            prospective_writer=failing_writer,
+        )
+
+    assert calls == {"collector": 1, "pipeline": 1}
+
+
+def test_prospective_preserves_execution_pit_decision(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+
+    result = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=False,
+        collector=collector,
+        pipeline=pipeline,
+        now_fn=lambda: BEFORE_AS_OF,
+        repository_commit_provider=lambda: "a" * 40,
+    )
+
+    execution = result["execution_manifest"]["manifest"]
+    prospective_payload = (
+        result["prospective_manifest"]["manifest"]
+    )
+
+    assert prospective_payload["pit_eligibility"] == (
+        execution["pit_eligibility"]
+    )
+    assert prospective_payload[
+        "eligible_for_pre_night"
+    ] is execution["eligible_for_pre_night"]
+
+
+# END PRE_NIGHT_PROSPECTIVE_DATASET_V1_TESTS

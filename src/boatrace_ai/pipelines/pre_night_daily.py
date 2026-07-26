@@ -31,6 +31,14 @@ from boatrace_ai.pipelines.pre_night_snapshot_etl import (
     build_output_paths,
     build_pre_night_program_parquet,
 )
+from boatrace_ai.pipelines.pre_night_prospective import (
+    PreNightProspectiveError,
+    build_prospective_manifest,
+    build_prospective_manifest_path,
+    resolve_repository_commit,
+    validate_prospective_manifest,
+    write_prospective_manifest,
+)
 
 
 ORCHESTRATOR_VERSION = "pre_night_daily_orchestrator_v1"
@@ -467,6 +475,9 @@ def run_pre_night_daily(
     collector: Callable | None = None,
     pipeline: Callable | None = None,
     now_fn=None,
+    repository_commit_provider: Callable | None = None,
+    prospective_writer: Callable | None = None,
+    prospective_validator: Callable | None = None,
 ) -> dict:
     """Run or plan one PRE_NIGHT program-only collection day."""
 
@@ -511,6 +522,54 @@ def run_pre_night_daily(
             race_date=date_value,
         )
 
+        commit_provider = (
+            repository_commit_provider
+            or resolve_repository_commit
+        )
+        repository_commit = commit_provider()
+
+        try:
+            prospective_payload = build_prospective_manifest(
+                race_date=date_value,
+                data_root=root,
+                execution_manifest_path=execution_manifest_path,
+                execution_validation=cached,
+                repository_commit=repository_commit,
+                created_at=cached["manifest"]["completed_at"],
+            )
+            prospective_path = (
+                build_prospective_manifest_path(
+                    prospective_payload,
+                    root,
+                )
+            )
+
+            if not prospective_path.is_file():
+                raise PreNightDailyIntegrityError(
+                    "PROSPECTIVE_MANIFEST_MISSING: "
+                    f"{prospective_path}"
+                )
+
+            validator = (
+                prospective_validator
+                or validate_prospective_manifest
+            )
+            prospective_validated = validator(
+                prospective_path,
+                root,
+                race_date=date_value,
+                expected_repository_commit=(
+                    repository_commit
+                ),
+            )
+
+        except PreNightDailyIntegrityError:
+            raise
+        except PreNightProspectiveError as exc:
+            raise PreNightDailyIntegrityError(
+                "Cached prospective manifest validation failed"
+            ) from exc
+
         return {
             "status": MANIFEST_STATUS_SUCCESS,
             "race_date": date_value.isoformat(),
@@ -520,6 +579,7 @@ def run_pre_night_daily(
             "collector_called": False,
             "pipeline_called": False,
             "execution_manifest": cached,
+            "prospective_manifest": prospective_validated,
         }
 
     # Never start or retry network acquisition after the PIT cutoff.
@@ -634,6 +694,64 @@ def run_pre_night_daily(
         race_date=date_value,
     )
 
+    commit_provider = (
+        repository_commit_provider
+        or resolve_repository_commit
+    )
+    repository_commit = commit_provider()
+
+    try:
+        prospective_payload = build_prospective_manifest(
+            race_date=date_value,
+            data_root=root,
+            execution_manifest_path=execution_manifest_path,
+            execution_validation=validated,
+            repository_commit=repository_commit,
+            created_at=validated["manifest"]["completed_at"],
+        )
+
+        writer = (
+            prospective_writer
+            or write_prospective_manifest
+        )
+        written = writer(
+            prospective_payload,
+            root,
+        )
+
+        if (
+            isinstance(written, dict)
+            and written.get("manifest_path") is not None
+        ):
+            prospective_path = Path(
+                written["manifest_path"]
+            )
+        else:
+            prospective_path = (
+                build_prospective_manifest_path(
+                    prospective_payload,
+                    root,
+                )
+            )
+
+        validator = (
+            prospective_validator
+            or validate_prospective_manifest
+        )
+        prospective_validated = validator(
+            prospective_path,
+            root,
+            race_date=date_value,
+            expected_repository_commit=(
+                repository_commit
+            ),
+        )
+
+    except PreNightProspectiveError as exc:
+        raise PreNightDailyIntegrityError(
+            "Prospective manifest creation failed"
+        ) from exc
+
     return {
         "status": MANIFEST_STATUS_SUCCESS,
         "race_date": date_value.isoformat(),
@@ -645,6 +763,7 @@ def run_pre_night_daily(
         "collector_result": collector_result,
         "pipeline_result": pipeline_result,
         "execution_manifest": validated,
+        "prospective_manifest": prospective_validated,
     }
 
 # BEGIN PRE_NIGHT_PIT_SAFETY_GATE_V1_MANIFEST_INTEGRATION
