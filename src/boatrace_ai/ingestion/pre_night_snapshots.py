@@ -238,6 +238,66 @@ def load_metadata(path: Path) -> dict:
     return payload
 
 
+
+# BEGIN PRE_NIGHT_PROGRAM_CACHE_PROVENANCE_V1
+
+
+def require_exact_bool(
+    value,
+    field_name: str,
+) -> bool:
+    if not isinstance(value, bool):
+        raise PreNightContractError(
+            f"{field_name} must be bool"
+        )
+
+    return value
+
+
+def require_positive_int(
+    value,
+    field_name: str,
+) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value <= 0
+    ):
+        raise PreNightContractError(
+            f"{field_name} must be positive int"
+        )
+
+    return value
+
+
+def require_sha256(
+    value,
+    field_name: str,
+) -> str:
+    if not isinstance(value, str):
+        raise PreNightContractError(
+            f"{field_name} must be SHA-256 string"
+        )
+
+    normalized = value.lower()
+
+    if len(normalized) != 64:
+        raise PreNightContractError(
+            f"{field_name} must contain "
+            "64 hex characters"
+        )
+
+    try:
+        int(normalized, 16)
+    except ValueError as error:
+        raise PreNightContractError(
+            f"{field_name} must contain "
+            "64 hex characters"
+        ) from error
+
+    return normalized
+
+
 def validate_cached_snapshot(
     race_date,
     data_root,
@@ -279,6 +339,39 @@ def validate_cached_snapshot(
         raise PreNightContractError(
             "metadata required fields missing: "
             f"{missing_fields}"
+        )
+
+    expected_spec = build_archive_spec(
+        date_value,
+        "program",
+    )
+
+    if metadata.get("source_url") != expected_spec["url"]:
+        raise PreNightContractError(
+            "metadata source_url mismatch"
+        )
+
+    if metadata.get("archive_path") != str(archive_path):
+        raise PreNightContractError(
+            "metadata archive_path mismatch"
+        )
+
+    http_status = require_positive_int(
+        metadata.get("http_status"),
+        "http_status",
+    )
+
+    if not 200 <= http_status < 300:
+        raise PreNightContractError(
+            "metadata http_status must be successful"
+        )
+
+    if not isinstance(
+        metadata.get("http_headers"),
+        dict,
+    ):
+        raise PreNightContractError(
+            "metadata http_headers must be object"
         )
 
     if (
@@ -354,7 +447,7 @@ def validate_cached_snapshot(
             "snapshot_at must equal as_of_time"
         )
 
-    parse_timestamp(
+    request_started_at = parse_timestamp(
         metadata["request_started_at"],
         "request_started_at",
     )
@@ -364,6 +457,12 @@ def validate_cached_snapshot(
         "fetched_at",
     )
 
+    if request_started_at > fetched_at:
+        raise PreNightContractError(
+            "request_started_at must not be "
+            "after fetched_at"
+        )
+
     actual_size = int(
         archive_path.stat().st_size
     )
@@ -372,8 +471,9 @@ def validate_cached_snapshot(
         archive_path
     )
 
-    expected_size = int(
-        metadata["response_size"]
+    expected_size = require_positive_int(
+        metadata["response_size"],
+        "response_size",
     )
 
     if actual_size != expected_size:
@@ -383,13 +483,15 @@ def validate_cached_snapshot(
             f"actual={actual_size}"
         )
 
-    expected_response_sha256 = str(
-        metadata["source_response_sha256"]
-    ).lower()
+    expected_response_sha256 = require_sha256(
+        metadata["source_response_sha256"],
+        "source_response_sha256",
+    )
 
-    expected_archive_sha256 = str(
-        metadata["archive_sha256"]
-    ).lower()
+    expected_archive_sha256 = require_sha256(
+        metadata["archive_sha256"],
+        "archive_sha256",
+    )
 
     if actual_sha256.lower() != (
         expected_response_sha256
@@ -409,14 +511,12 @@ def validate_cached_snapshot(
 
     eligible = fetched_at <= expected_as_of
 
-    if (
-        bool(
-            metadata[
-                "eligible_for_pre_night"
-            ]
-        )
-        != eligible
-    ):
+    metadata_eligible = require_exact_bool(
+        metadata["eligible_for_pre_night"],
+        "eligible_for_pre_night",
+    )
+
+    if metadata_eligible != eligible:
         raise PreNightContractError(
             "eligible_for_pre_night mismatch"
         )
