@@ -479,3 +479,136 @@ def test_rejects_tampered_parquet_cache(
             ),
             now_fn=fixed_clock,
         )
+
+# BEGIN PRE_NIGHT_PIT_SAFETY_GATE_V1_TEST
+def test_explicit_pit_gate_exposes_validation_outcome():
+    from boatrace_ai.pipelines.pre_night_eligibility import (
+        PreNightEligibilityStatus,
+    )
+    from boatrace_ai.pipelines.pre_night_snapshot_etl import (
+        evaluate_pre_night_pit_eligibility,
+    )
+
+    decision = evaluate_pre_night_pit_eligibility(
+        race_date="2026-07-27",
+        as_of_time="2026-07-26T21:30:00+09:00",
+        validation_error=ValueError("fetched after as_of time"),
+    )
+
+    assert decision.eligible is False
+    assert decision.status is (
+        PreNightEligibilityStatus.SKIPPED_FETCHED_AFTER_AS_OF
+    )
+# END PRE_NIGHT_PIT_SAFETY_GATE_V1_TEST
+
+
+# BEGIN PRE_NIGHT_PIT_SAFETY_GATE_AST_RETRY_TESTS
+
+
+def test_pipeline_manifest_records_explicit_pit_decision(tmp_path):
+    snapshot = build_snapshot(tmp_path)
+
+    result = pipeline.build_pre_night_program_parquet(
+        "2026-08-10",
+        tmp_path,
+        parser=lambda *args, **kwargs: valid_program_frame(),
+        extractor=fake_extractor,
+        snapshot_validator=make_validator(snapshot),
+        now_fn=fixed_clock,
+    )
+
+    manifest = result["manifest"]
+
+    assert manifest["eligibility_status"] == "ELIGIBLE"
+    assert manifest["eligible_for_pre_night"] is True
+    assert manifest["eligibility_reason"]
+    assert manifest["pit_eligibility"]["status"] == "ELIGIBLE"
+    assert manifest["pit_eligibility"]["eligible"] is True
+    assert manifest["pit_eligibility"]["race_date"] == "2026-08-10"
+    assert manifest["pit_eligibility"]["as_of_time"] == (
+        "2026-08-09T21:30:00+09:00"
+    )
+
+
+def test_cached_pipeline_manifest_rejects_missing_pit_fields(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+
+    first = pipeline.build_pre_night_program_parquet(
+        "2026-08-10",
+        tmp_path,
+        parser=lambda *args, **kwargs: valid_program_frame(),
+        extractor=fake_extractor,
+        snapshot_validator=make_validator(snapshot),
+        now_fn=fixed_clock,
+    )
+
+    manifest_path = first["paths"]["manifest"]
+    manifest = json.loads(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    manifest.pop("eligibility_status")
+    manifest_path.write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        pipeline.PreNightOutputIntegrityError,
+        match="eligibility",
+    ):
+        pipeline.build_pre_night_program_parquet(
+            "2026-08-10",
+            tmp_path,
+            parser=lambda *args, **kwargs: pytest.fail(
+                "parser must not run"
+            ),
+            extractor=lambda *args, **kwargs: pytest.fail(
+                "extractor must not run"
+            ),
+            snapshot_validator=make_validator(snapshot),
+            now_fn=fixed_clock,
+        )
+
+
+def test_cached_pipeline_manifest_rejects_nested_pit_mismatch(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+
+    first = pipeline.build_pre_night_program_parquet(
+        "2026-08-10",
+        tmp_path,
+        parser=lambda *args, **kwargs: valid_program_frame(),
+        extractor=fake_extractor,
+        snapshot_validator=make_validator(snapshot),
+        now_fn=fixed_clock,
+    )
+
+    manifest_path = first["paths"]["manifest"]
+    manifest = json.loads(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    manifest["pit_eligibility"]["eligible"] = False
+    manifest_path.write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        pipeline.PreNightOutputIntegrityError,
+        match="eligibility",
+    ):
+        pipeline.build_pre_night_program_parquet(
+            "2026-08-10",
+            tmp_path,
+            parser=lambda *args, **kwargs: pytest.fail(
+                "parser must not run"
+            ),
+            extractor=lambda *args, **kwargs: pytest.fail(
+                "extractor must not run"
+            ),
+            snapshot_validator=make_validator(snapshot),
+            now_fn=fixed_clock,
+        )

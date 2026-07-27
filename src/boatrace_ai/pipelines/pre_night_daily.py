@@ -234,48 +234,69 @@ def build_dry_run_plan(
     )
 
     eligible_to_start = current_time <= as_of_time
+    if eligible_to_start:
+        eligibility_decision = _daily_eligible_decision(
+            race_date=date_value.isoformat(),
+            as_of_time=as_of_time.isoformat(),
+            reason="CURRENT_TIME_BY_AS_OF",
+        )
+    else:
+        eligibility_decision = _daily_skipped_decision(
+            status=(
+                _DailyPitStatus.SKIPPED_FETCHED_AFTER_AS_OF
+            ),
+            reason="CURRENT_TIME_AFTER_AS_OF",
+            race_date=date_value.isoformat(),
+            as_of_time=as_of_time.isoformat(),
+        )
 
-    return {
-        "status": (
-            MANIFEST_STATUS_DRY_RUN
-            if eligible_to_start
-            else MANIFEST_STATUS_BLOCKED
-        ),
-        "dry_run": True,
-        "race_date": date_value.isoformat(),
-        "execution_mode": EXECUTION_MODE,
-        "orchestrator_version": ORCHESTRATOR_VERSION,
-        "execution_contract_version": (
-            EXECUTION_CONTRACT_VERSION
-        ),
-        "as_of_time": as_of_time.isoformat(),
-        "checked_at": current_time.isoformat(),
-        "eligible_to_start": eligible_to_start,
-        "block_reason": (
-            None
-            if eligible_to_start
-            else "CURRENT_TIME_AFTER_AS_OF"
-        ),
-        "planned_snapshot_archive": str(
-            snapshot_paths["archive"]
-        ),
-        "planned_snapshot_metadata": str(
-            snapshot_paths["metadata"]
-        ),
-        "planned_output_parquet": str(
-            output_paths["parquet"]
-        ),
-        "planned_pipeline_manifest": str(
-            output_paths["manifest"]
-        ),
-        "planned_execution_manifest": str(
-            execution_manifest
-        ),
-        "network_performed": False,
-        "data_files_written": False,
-        "collector_called": False,
-        "pipeline_called": False,
-    }
+    plan = {
+            "status": (
+                MANIFEST_STATUS_DRY_RUN
+                if eligible_to_start
+                else MANIFEST_STATUS_BLOCKED
+            ),
+            "dry_run": True,
+            "race_date": date_value.isoformat(),
+            "execution_mode": EXECUTION_MODE,
+            "orchestrator_version": ORCHESTRATOR_VERSION,
+            "execution_contract_version": (
+                EXECUTION_CONTRACT_VERSION
+            ),
+            "as_of_time": as_of_time.isoformat(),
+            "checked_at": current_time.isoformat(),
+            "eligible_to_start": eligible_to_start,
+            "block_reason": (
+                None
+                if eligible_to_start
+                else "CURRENT_TIME_AFTER_AS_OF"
+            ),
+            "planned_snapshot_archive": str(
+                snapshot_paths["archive"]
+            ),
+            "planned_snapshot_metadata": str(
+                snapshot_paths["metadata"]
+            ),
+            "planned_output_parquet": str(
+                output_paths["parquet"]
+            ),
+            "planned_pipeline_manifest": str(
+                output_paths["manifest"]
+            ),
+            "planned_execution_manifest": str(
+                execution_manifest
+            ),
+            "network_performed": False,
+            "data_files_written": False,
+            "collector_called": False,
+            "pipeline_called": False,
+        }
+    plan.update(
+        build_pre_night_eligibility_manifest_fields(
+            eligibility_decision
+        )
+    )
+    return plan
 
 
 def validate_execution_manifest(
@@ -423,6 +444,11 @@ def validate_execution_manifest(
             "sha256": actual_sha256,
         }
 
+    _validate_execution_pipeline_pit_consistency(
+        manifest,
+        validated_artifacts["pipeline_manifest"]["path"],
+        data_root=root,
+    )
     return {
         "manifest_path": resolved_manifest,
         "manifest": manifest,
@@ -548,6 +574,11 @@ def run_pre_night_daily(
         "manifest",
     )
 
+    pipeline_eligibility_fields = _load_pipeline_pit_fields(
+        pipeline_manifest,
+        data_root=root,
+        race_date=date_value,
+    )
     completed_at = require_aware_datetime(
         clock(),
         "completed_at",
@@ -588,6 +619,9 @@ def run_pre_night_daily(
         "pipeline_called": True,
         "artifacts": artifacts,
     }
+    execution_manifest.update(
+        pipeline_eligibility_fields
+    )
 
     atomic_write_json(
         execution_manifest,
@@ -612,3 +646,219 @@ def run_pre_night_daily(
         "pipeline_result": pipeline_result,
         "execution_manifest": validated,
     }
+
+# BEGIN PRE_NIGHT_PIT_SAFETY_GATE_V1_MANIFEST_INTEGRATION
+from boatrace_ai.pipelines.pre_night_eligibility import (
+    PreNightEligibilityDecision,
+    manifest_eligibility_fields,
+)
+
+
+def build_pre_night_eligibility_manifest_fields(
+    decision: PreNightEligibilityDecision,
+) -> dict[str, object]:
+    """Build deterministic PIT fields for dry-run/live-run manifests."""
+
+    return manifest_eligibility_fields(decision)
+# END PRE_NIGHT_PIT_SAFETY_GATE_V1_MANIFEST_INTEGRATION
+
+
+# PRE_NIGHT_PIT_SAFETY_GATE_AST_RETRY_DAILY_V1
+from boatrace_ai.pipelines.pre_night_eligibility import (
+    PreNightEligibilityDecision as _DailyPitDecision,
+    PreNightEligibilityStatus as _DailyPitStatus,
+    eligible_decision as _daily_eligible_decision,
+    skipped_decision as _daily_skipped_decision,
+)
+
+
+def _validate_daily_pit_fields(
+    manifest,
+    *,
+    error_prefix,
+    race_date=None,
+    as_of_time=None,
+):
+    if not isinstance(manifest, dict):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} must be a dict"
+        )
+
+    required = {
+        "eligibility_status",
+        "eligible_for_pre_night",
+        "eligibility_reason",
+        "pit_eligibility",
+    }
+
+    missing = required - set(manifest)
+    if missing:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} eligibility fields missing: "
+            f"{sorted(missing)}"
+        )
+
+    nested = manifest.get("pit_eligibility")
+    if not isinstance(nested, dict):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} pit_eligibility must be a dict"
+        )
+
+    nested_required = {
+        "status",
+        "eligible",
+        "reason",
+        "race_date",
+        "as_of_time",
+    }
+
+    nested_missing = nested_required - set(nested)
+    if nested_missing:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} nested eligibility fields missing: "
+            f"{sorted(nested_missing)}"
+        )
+
+    if not isinstance(
+        manifest.get("eligible_for_pre_night"),
+        bool,
+    ):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} eligible_for_pre_night must be bool"
+        )
+
+    if not isinstance(nested.get("eligible"), bool):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} nested eligible must be bool"
+        )
+
+    try:
+        decision = _DailyPitDecision(
+            status=nested["status"],
+            eligible=nested["eligible"],
+            reason=nested["reason"],
+            race_date=nested["race_date"],
+            as_of_time=nested["as_of_time"],
+            details=nested.get("details", {}),
+        )
+        expected = manifest_eligibility_fields(decision)
+    except Exception as exc:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} PIT eligibility decision is invalid"
+        ) from exc
+
+    for field_name in sorted(required):
+        if manifest.get(field_name) != expected[field_name]:
+            raise PreNightDailyIntegrityError(
+                f"{error_prefix} PIT eligibility mismatch: "
+                f"{field_name}"
+            )
+
+    if (
+        race_date is not None
+        and str(nested["race_date"]) != str(race_date)
+    ):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} PIT race_date mismatch"
+        )
+
+    if (
+        as_of_time is not None
+        and str(nested["as_of_time"]) != str(as_of_time)
+    ):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} PIT as_of_time mismatch"
+        )
+
+    return expected
+
+
+def _load_pipeline_pit_fields(
+    pipeline_manifest_path,
+    *,
+    data_root,
+    race_date,
+):
+    path = _path_within_root(
+        Path(pipeline_manifest_path),
+        Path(data_root),
+    )
+
+    if not path.is_file():
+        raise PreNightDailyIntegrityError(
+            f"Pipeline manifest does not exist: {path}"
+        )
+
+    try:
+        manifest = json.loads(
+            path.read_text(encoding="utf-8")
+        )
+    except Exception as exc:
+        raise PreNightDailyIntegrityError(
+            f"Pipeline manifest is malformed: {path}"
+        ) from exc
+
+    as_of_time = manifest.get("as_of_time")
+
+    fields = _validate_daily_pit_fields(
+        manifest,
+        error_prefix="Pipeline manifest",
+        race_date=normalize_race_date(
+            race_date
+        ).isoformat(),
+        as_of_time=as_of_time,
+    )
+
+    if fields["eligible_for_pre_night"] is not True:
+        raise PreNightDailyIntegrityError(
+            "Pipeline manifest is not eligible for PRE_NIGHT"
+        )
+
+    return fields
+
+
+def _validate_execution_pipeline_pit_consistency(
+    execution_manifest,
+    pipeline_manifest_path,
+    *,
+    data_root,
+):
+    execution_fields = _validate_daily_pit_fields(
+        execution_manifest,
+        error_prefix="Execution manifest",
+        race_date=execution_manifest.get("race_date"),
+        as_of_time=execution_manifest.get("as_of_time"),
+    )
+
+    path = _path_within_root(
+        Path(pipeline_manifest_path),
+        Path(data_root),
+    )
+
+    try:
+        pipeline_manifest = json.loads(
+            path.read_text(encoding="utf-8")
+        )
+    except Exception as exc:
+        raise PreNightDailyIntegrityError(
+            f"Pipeline manifest is malformed: {path}"
+        ) from exc
+
+    pipeline_fields = _validate_daily_pit_fields(
+        pipeline_manifest,
+        error_prefix="Pipeline manifest",
+        race_date=execution_manifest.get("race_date"),
+        as_of_time=execution_manifest.get("as_of_time"),
+    )
+
+    if execution_fields != pipeline_fields:
+        raise PreNightDailyIntegrityError(
+            "Execution and pipeline PIT eligibility differ"
+        )
+
+    if execution_fields["eligible_for_pre_night"] is not True:
+        raise PreNightDailyIntegrityError(
+            "Cached execution manifest is not PRE_NIGHT eligible"
+        )
+
+    return execution_fields
