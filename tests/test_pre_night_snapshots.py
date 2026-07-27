@@ -516,3 +516,345 @@ def test_rejects_unsupported_contract_version(
             tmp_path,
             session=FailingSession(),
         )
+
+
+# BEGIN PRE_NIGHT_PROGRAM_CACHE_PROVENANCE_V1_TESTS
+
+
+def _collect_cache_provenance_fixture(tmp_path):
+    return snapshots.collect_pre_night_program_snapshot(
+        "2026-08-10",
+        tmp_path,
+        session=FakeSession(
+            FakeResponse(
+                content=b"cache-provenance-test"
+            )
+        ),
+        now_fn=make_clock(
+            dt.datetime(
+                2026,
+                8,
+                9,
+                12,
+                0,
+                tzinfo=UTC,
+            ),
+            dt.datetime(
+                2026,
+                8,
+                9,
+                12,
+                1,
+                tzinfo=UTC,
+            ),
+        ),
+    )
+
+
+def _read_cache_provenance_metadata(paths):
+    return json.loads(
+        paths["metadata"].read_text(
+            encoding="utf-8"
+        )
+    )
+
+
+def _write_cache_provenance_metadata(
+    paths,
+    metadata,
+):
+    paths["metadata"].write_text(
+        json.dumps(
+            metadata,
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _validate_cache_without_http(tmp_path):
+    return snapshots.collect_pre_night_program_snapshot(
+        "2026-08-10",
+        tmp_path,
+        session=FailingSession(),
+    )
+
+
+def test_cache_rejects_malformed_metadata_json(
+    tmp_path,
+    disable_real_lzh_validation,
+):
+    outcome = _collect_cache_provenance_fixture(
+        tmp_path
+    )
+    outcome["paths"]["metadata"].write_text(
+        "{not-json",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        snapshots.PreNightCacheError,
+        match="not valid JSON",
+    ):
+        _validate_cache_without_http(tmp_path)
+
+
+def test_cache_rejects_non_boolean_eligibility(
+    tmp_path,
+    disable_real_lzh_validation,
+):
+    outcome = _collect_cache_provenance_fixture(
+        tmp_path
+    )
+    paths = outcome["paths"]
+    metadata = _read_cache_provenance_metadata(
+        paths
+    )
+    metadata["eligible_for_pre_night"] = "false"
+    _write_cache_provenance_metadata(
+        paths,
+        metadata,
+    )
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="must be bool",
+    ):
+        _validate_cache_without_http(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "invalid_size",
+    [True, "12", 0, -1],
+)
+def test_cache_rejects_invalid_response_size(
+    tmp_path,
+    disable_real_lzh_validation,
+    invalid_size,
+):
+    outcome = _collect_cache_provenance_fixture(
+        tmp_path
+    )
+    paths = outcome["paths"]
+    metadata = _read_cache_provenance_metadata(
+        paths
+    )
+    metadata["response_size"] = invalid_size
+    _write_cache_provenance_metadata(
+        paths,
+        metadata,
+    )
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="positive int",
+    ):
+        _validate_cache_without_http(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_hash"),
+    [
+        ("source_response_sha256", ""),
+        ("source_response_sha256", "abc"),
+        ("source_response_sha256", "g" * 64),
+        ("source_response_sha256", 123),
+        ("archive_sha256", ""),
+        ("archive_sha256", "abc"),
+        ("archive_sha256", "g" * 64),
+        ("archive_sha256", 123),
+    ],
+)
+def test_cache_rejects_malformed_sha256(
+    tmp_path,
+    disable_real_lzh_validation,
+    field_name,
+    invalid_hash,
+):
+    outcome = _collect_cache_provenance_fixture(
+        tmp_path
+    )
+    paths = outcome["paths"]
+    metadata = _read_cache_provenance_metadata(
+        paths
+    )
+    metadata[field_name] = invalid_hash
+    _write_cache_provenance_metadata(
+        paths,
+        metadata,
+    )
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="SHA-256|64 hex",
+    ):
+        _validate_cache_without_http(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "replacement"),
+    [
+        (
+            "source_url",
+            "https://example.invalid/wrong.lzh",
+        ),
+        (
+            "archive_path",
+            "/tmp/different-program.lzh",
+        ),
+    ],
+)
+def test_cache_rejects_provenance_binding_mismatch(
+    tmp_path,
+    disable_real_lzh_validation,
+    field_name,
+    replacement,
+):
+    outcome = _collect_cache_provenance_fixture(
+        tmp_path
+    )
+    paths = outcome["paths"]
+    metadata = _read_cache_provenance_metadata(
+        paths
+    )
+    metadata[field_name] = replacement
+    _write_cache_provenance_metadata(
+        paths,
+        metadata,
+    )
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match=f"{field_name} mismatch",
+    ):
+        _validate_cache_without_http(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "invalid_status",
+    [True, "200", 199, 300],
+)
+def test_cache_rejects_invalid_http_status(
+    tmp_path,
+    disable_real_lzh_validation,
+    invalid_status,
+):
+    outcome = _collect_cache_provenance_fixture(
+        tmp_path
+    )
+    paths = outcome["paths"]
+    metadata = _read_cache_provenance_metadata(
+        paths
+    )
+    metadata["http_status"] = invalid_status
+    _write_cache_provenance_metadata(
+        paths,
+        metadata,
+    )
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="http_status",
+    ):
+        _validate_cache_without_http(tmp_path)
+
+
+def test_cache_rejects_non_object_http_headers(
+    tmp_path,
+    disable_real_lzh_validation,
+):
+    outcome = _collect_cache_provenance_fixture(
+        tmp_path
+    )
+    paths = outcome["paths"]
+    metadata = _read_cache_provenance_metadata(
+        paths
+    )
+    metadata["http_headers"] = []
+    _write_cache_provenance_metadata(
+        paths,
+        metadata,
+    )
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="http_headers must be object",
+    ):
+        _validate_cache_without_http(tmp_path)
+
+
+def test_cache_rejects_request_started_after_fetch(
+    tmp_path,
+    disable_real_lzh_validation,
+):
+    outcome = _collect_cache_provenance_fixture(
+        tmp_path
+    )
+    paths = outcome["paths"]
+    metadata = _read_cache_provenance_metadata(
+        paths
+    )
+    metadata["request_started_at"] = (
+        "2026-08-09T12:02:00+00:00"
+    )
+    _write_cache_provenance_metadata(
+        paths,
+        metadata,
+    )
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="must not be after fetched_at",
+    ):
+        _validate_cache_without_http(tmp_path)
+
+
+def test_pair_commit_failure_is_fail_closed(
+    tmp_path,
+    disable_real_lzh_validation,
+    monkeypatch,
+):
+    paths = snapshots.build_snapshot_paths(
+        "2026-08-10",
+        tmp_path,
+    )
+    path_type = type(paths["archive"])
+    original_replace = path_type.replace
+
+    def fail_metadata_commit(self, target):
+        if path_type(target) == paths["metadata"]:
+            raise OSError(
+                "injected metadata commit failure"
+            )
+
+        return original_replace(self, target)
+
+    monkeypatch.setattr(
+        path_type,
+        "replace",
+        fail_metadata_commit,
+    )
+
+    with pytest.raises(
+        OSError,
+        match="injected metadata commit failure",
+    ):
+        _collect_cache_provenance_fixture(
+            tmp_path
+        )
+
+    assert paths["archive"].is_file()
+    assert not paths["metadata"].exists()
+    assert not (
+        paths["directory"] / ".collection.lock"
+    ).exists()
+    assert list(
+        paths["directory"].glob("*.part")
+    ) == []
+
+    with pytest.raises(
+        snapshots.PreNightCacheError,
+        match="must exist together",
+    ):
+        _validate_cache_without_http(tmp_path)
