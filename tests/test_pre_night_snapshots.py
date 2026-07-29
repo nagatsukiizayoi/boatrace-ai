@@ -858,3 +858,498 @@ def test_pair_commit_failure_is_fail_closed(
         match="must exist together",
     ):
         _validate_cache_without_http(tmp_path)
+
+
+# BEGIN PHASE1_D1B1_TESTS
+# D1-B1 Snapshot v2 deadline-evidence metadata binding tests.
+
+
+def _d1b1_snapshots():
+    import boatrace_ai.ingestion.pre_night_snapshots as snapshots
+    return snapshots
+
+
+def _d1b1_validated_evidence():
+    return {
+        "schema_version": "test-deadline-evidence-v1",
+        "request_started_at": "2026-07-28T10:00:00+00:00",
+        "fetched_at": "2026-07-28T10:00:01+00:00",
+        "source_name": "official-test-source",
+        "source_locator": "https://example.invalid/deadlines",
+        "source_authority": "official-test-authority",
+        "source_timezone": "Asia/Tokyo",
+        "race_date": "2026-07-29",
+        "venue_code": "01",
+        "http_status": 200,
+        "response_headers": {},
+        "raw_source_sha256": "0" * 64,
+        "race_deadlines": [],
+    }
+
+
+def test_d1b1_t01_legacy_binding_is_empty():
+    snapshots = _d1b1_snapshots()
+    assert snapshots._build_deadline_evidence_metadata(None) == {}
+
+
+def test_d1b1_t02_validated_evidence_is_bound(monkeypatch):
+    snapshots = _d1b1_snapshots()
+    validated = _d1b1_validated_evidence()
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        lambda evidence: validated,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        lambda evidence: b"canonical",
+    )
+
+    metadata = snapshots._build_deadline_evidence_metadata(
+        {"unvalidated": True}
+    )
+
+    assert metadata["deadline_evidence"] is validated
+    assert set(metadata) == {
+        "deadline_evidence",
+        "deadline_evidence_sha256",
+    }
+
+
+def test_d1b1_t03_canonicalizer_receives_validated_value(
+    monkeypatch,
+):
+    snapshots = _d1b1_snapshots()
+    validated = _d1b1_validated_evidence()
+    received = []
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        lambda evidence: validated,
+    )
+
+    def canonicalize(evidence):
+        received.append(evidence)
+        return b"canonical"
+
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        canonicalize,
+    )
+
+    snapshots._build_deadline_evidence_metadata(
+        {"unvalidated": True}
+    )
+    assert received == [validated]
+
+
+def test_d1b1_t04_sha256_binds_canonical_bytes(monkeypatch):
+    import hashlib
+
+    snapshots = _d1b1_snapshots()
+    validated = _d1b1_validated_evidence()
+    canonical = b"deterministic canonical evidence"
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        lambda evidence: validated,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        lambda evidence: canonical,
+    )
+
+    metadata = snapshots._build_deadline_evidence_metadata(
+        {"input": True}
+    )
+
+    assert metadata["deadline_evidence_sha256"] == (
+        hashlib.sha256(canonical).hexdigest()
+    )
+
+
+def test_d1b1_t05_timestamps_are_not_regenerated(monkeypatch):
+    snapshots = _d1b1_snapshots()
+    validated = _d1b1_validated_evidence()
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        lambda evidence: validated,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        lambda evidence: b"canonical",
+    )
+
+    metadata = snapshots._build_deadline_evidence_metadata(
+        {"input": True}
+    )
+    bound = metadata["deadline_evidence"]
+
+    assert bound["request_started_at"] == (
+        validated["request_started_at"]
+    )
+    assert bound["fetched_at"] == validated["fetched_at"]
+
+
+def test_d1b1_t06_invalid_evidence_fails_closed(monkeypatch):
+    import pytest
+
+    snapshots = _d1b1_snapshots()
+
+    def reject(evidence):
+        raise ValueError("invalid deadline evidence")
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        reject,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="invalid deadline evidence",
+    ):
+        snapshots._build_deadline_evidence_metadata(
+            {"invalid": True}
+        )
+
+
+def test_d1b1_t07_canonicalization_failure_propagates(
+    monkeypatch,
+):
+    import pytest
+
+    snapshots = _d1b1_snapshots()
+    validated = _d1b1_validated_evidence()
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        lambda evidence: validated,
+    )
+
+    def fail_canonicalization(evidence):
+        raise TypeError("not canonicalizable")
+
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        fail_canonicalization,
+    )
+
+    with pytest.raises(TypeError, match="not canonicalizable"):
+        snapshots._build_deadline_evidence_metadata(
+            {"input": True}
+        )
+
+
+def test_d1b1_t08_digest_uses_exact_canonical_output(
+    monkeypatch,
+):
+    import hashlib
+
+    snapshots = _d1b1_snapshots()
+    validated = _d1b1_validated_evidence()
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        lambda evidence: validated,
+    )
+
+    first = b'{"a":1}'
+    second = b'{"a":1}\n'
+
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        lambda evidence: first,
+    )
+    first_result = snapshots._build_deadline_evidence_metadata(
+        {"input": True}
+    )
+
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        lambda evidence: second,
+    )
+    second_result = snapshots._build_deadline_evidence_metadata(
+        {"input": True}
+    )
+
+    assert first_result["deadline_evidence_sha256"] == (
+        hashlib.sha256(first).hexdigest()
+    )
+    assert second_result["deadline_evidence_sha256"] == (
+        hashlib.sha256(second).hexdigest()
+    )
+    assert (
+        first_result["deadline_evidence_sha256"]
+        != second_result["deadline_evidence_sha256"]
+    )
+
+
+def test_d1b1_t09_validation_precedes_directory_and_network(
+    monkeypatch,
+    tmp_path,
+):
+    import pytest
+
+    snapshots = _d1b1_snapshots()
+    events = []
+
+    class ForbiddenSession:
+        def get(self, *args, **kwargs):
+            events.append("network")
+            raise AssertionError("network must not be reached")
+
+    def reject(evidence):
+        events.append("validate")
+        raise ValueError("reject before publication")
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        reject,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="reject before publication",
+    ):
+        snapshots.collect_pre_night_program_snapshot(
+            "2026-07-29",
+            tmp_path,
+            session=ForbiddenSession(),
+            deadline_evidence={"invalid": True},
+        )
+
+    assert events == ["validate"]
+    assert not (tmp_path / "snapshots").exists()
+    assert list(tmp_path.rglob("*")) == []
+
+
+def test_d1b1_t10_validation_is_before_first_publication_call():
+    import inspect
+
+    snapshots = _d1b1_snapshots()
+    source = inspect.getsource(
+        snapshots.collect_pre_night_program_snapshot
+    )
+
+    validation_index = source.index(
+        "_build_deadline_evidence_metadata("
+    )
+    directory_index = source.index("directory.mkdir(")
+    network_index = source.index("client.get(")
+    temporary_archive_index = source.index(
+        'temporary_archive.open("xb")'
+    )
+    temporary_metadata_index = source.index(
+        "temporary_metadata.open("
+    )
+
+    assert validation_index < directory_index
+    assert validation_index < network_index
+    assert validation_index < temporary_archive_index
+    assert validation_index < temporary_metadata_index
+
+
+def test_d1b1_t11_raw_bytes_are_not_added_to_binding(
+    monkeypatch,
+):
+    snapshots = _d1b1_snapshots()
+    validated = _d1b1_validated_evidence()
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        lambda evidence: validated,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        lambda evidence: b"canonical",
+    )
+
+    metadata = snapshots._build_deadline_evidence_metadata(
+        {"input": True}
+    )
+
+    assert set(metadata) == {
+        "deadline_evidence",
+        "deadline_evidence_sha256",
+    }
+    assert "raw_source_bytes" not in metadata
+    assert "raw_html" not in metadata
+    assert "canonical_bytes" not in metadata
+
+
+def test_d1b1_t12_no_cutoff_or_safety_margin_is_generated(
+    monkeypatch,
+):
+    snapshots = _d1b1_snapshots()
+    validated = _d1b1_validated_evidence()
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        lambda evidence: validated,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        lambda evidence: b"canonical",
+    )
+
+    metadata = snapshots._build_deadline_evidence_metadata(
+        {"input": True}
+    )
+    serialized = repr(metadata)
+
+    assert "eligibility_cutoff_at" not in serialized
+    assert "safety_margin_seconds" not in serialized
+
+
+def test_d1b1_t13_valid_evidence_is_atomically_published_and_cached(
+    monkeypatch,
+    tmp_path,
+):
+    import datetime as dt
+    import hashlib
+    import json
+
+    snapshots = _d1b1_snapshots()
+    validated = _d1b1_validated_evidence()
+    canonical = b"canonical-deadline-evidence"
+    archive_bytes = b"test-program-archive"
+    network_calls = []
+
+    class Response:
+        status_code = 200
+        headers = {
+            "Content-Type": "application/octet-stream",
+        }
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield archive_bytes
+
+        def close(self):
+            return None
+
+    class Session:
+        def get(self, url, **kwargs):
+            network_calls.append(url)
+            return Response()
+
+    class ForbiddenCachedSession:
+        def get(self, *args, **kwargs):
+            raise AssertionError(
+                "cached snapshot must not perform another request"
+            )
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        lambda evidence: validated,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        lambda evidence: canonical,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "validate_lzh_file",
+        lambda path: None,
+    )
+
+    times = iter([
+        dt.datetime(
+            2026, 7, 28, 12, 0, 0,
+            tzinfo=dt.timezone.utc,
+        ),
+        dt.datetime(
+            2026, 7, 28, 12, 1, 0,
+            tzinfo=dt.timezone.utc,
+        ),
+    ])
+
+    first = snapshots.collect_pre_night_program_snapshot(
+        "2026-07-29",
+        tmp_path,
+        session=Session(),
+        now_fn=lambda: next(times),
+        deadline_evidence={"input": True},
+    )
+
+    paths = snapshots.build_snapshot_paths(
+        "2026-07-29",
+        tmp_path,
+    )
+
+    assert paths["archive"].is_file()
+    assert paths["metadata"].is_file()
+    assert not list(paths["directory"].glob("*.part"))
+    assert not (paths["directory"] / ".collection.lock").exists()
+
+    metadata = json.loads(
+        paths["metadata"].read_text(encoding="utf-8")
+    )
+
+    expected_digest = hashlib.sha256(
+        canonical
+    ).hexdigest()
+
+    assert metadata["deadline_evidence"] == validated
+    assert metadata["deadline_evidence_sha256"] == expected_digest
+    assert first["metadata"]["deadline_evidence"] == validated
+    assert (
+        first["metadata"]["deadline_evidence_sha256"]
+        == expected_digest
+    )
+    assert first["cached"] is False
+    assert len(network_calls) == 1
+
+    second = snapshots.collect_pre_night_program_snapshot(
+        "2026-07-29",
+        tmp_path,
+        session=ForbiddenCachedSession(),
+        deadline_evidence={"input": True},
+    )
+
+    assert second["cached"] is True
+    assert second["metadata"]["deadline_evidence"] == validated
+    assert (
+        second["metadata"]["deadline_evidence_sha256"]
+        == expected_digest
+    )
+    assert len(network_calls) == 1
+
+
+def test_d1b1_t14_deadline_evidence_is_keyword_only():
+    import inspect
+
+    snapshots = _d1b1_snapshots()
+    signature = inspect.signature(
+        snapshots.collect_pre_night_program_snapshot
+    )
+    parameter = signature.parameters["deadline_evidence"]
+
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is None
+# END PHASE1_D1B1_TESTS

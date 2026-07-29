@@ -15,6 +15,10 @@ from boatrace_ai.ingestion.daily_archives import (
     build_archive_spec,
     validate_lzh_file,
 )
+from boatrace_ai.ingestion.pre_night_deadlines import (
+    canonical_deadline_evidence_bytes,
+    validate_deadline_evidence,
+)
 
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -549,12 +553,65 @@ def validate_cached_snapshot(
     }
 
 
+
+def _build_deadline_evidence_metadata(
+    deadline_evidence,
+) -> dict:
+    """Validate and deterministically bind optional D1-A evidence."""
+    if deadline_evidence is None:
+        return {}
+
+    validated_evidence = validate_deadline_evidence(
+        deadline_evidence
+    )
+    canonical_bytes = canonical_deadline_evidence_bytes(
+        validated_evidence
+    )
+
+    return {
+        "deadline_evidence": validated_evidence,
+        "deadline_evidence_sha256": hashlib.sha256(
+            canonical_bytes
+        ).hexdigest(),
+    }
+
+
+def _require_cached_deadline_binding(
+    outcome: dict,
+    deadline_metadata: dict,
+) -> dict:
+    """Require a cached Snapshot v2 to match requested evidence."""
+    if not deadline_metadata:
+        return outcome
+
+    metadata = outcome.get("metadata")
+
+    if not isinstance(metadata, dict):
+        raise PreNightIntegrityError(
+            "cached snapshot metadata is unavailable"
+        )
+
+    for field_name in (
+        "deadline_evidence",
+        "deadline_evidence_sha256",
+    ):
+        if metadata.get(field_name) != deadline_metadata[field_name]:
+            raise PreNightIntegrityError(
+                "cached snapshot deadline evidence mismatch: "
+                f"{field_name}"
+            )
+
+    return outcome
+
+
 def collect_pre_night_program_snapshot(
     race_date,
     data_root,
     timeout=60,
     session=None,
     now_fn=None,
+    *,
+    deadline_evidence=None,
 ) -> dict:
     date_value = normalize_race_date(race_date)
     paths = build_snapshot_paths(
@@ -565,13 +622,23 @@ def collect_pre_night_program_snapshot(
     archive_path = paths["archive"]
     metadata_path = paths["metadata"]
 
+    deadline_metadata = (
+        _build_deadline_evidence_metadata(
+            deadline_evidence
+        )
+    )
+
     archive_exists = archive_path.exists()
     metadata_exists = metadata_path.exists()
 
     if archive_exists or metadata_exists:
-        return validate_cached_snapshot(
+        outcome = validate_cached_snapshot(
             date_value,
             data_root,
+        )
+        return _require_cached_deadline_binding(
+            outcome,
+            deadline_metadata,
         )
 
     directory = paths["directory"]
@@ -627,9 +694,13 @@ def collect_pre_night_program_snapshot(
 
     try:
         if archive_path.exists() or metadata_path.exists():
-            return validate_cached_snapshot(
+            outcome = validate_cached_snapshot(
                 date_value,
                 data_root,
+            )
+            return _require_cached_deadline_binding(
+                outcome,
+                deadline_metadata,
             )
 
         spec = build_archive_spec(
@@ -785,6 +856,7 @@ def collect_pre_night_program_snapshot(
                 in response_headers.items()
             },
         }
+        metadata.update(deadline_metadata)
 
         with temporary_metadata.open(
             "x",
@@ -816,6 +888,10 @@ def collect_pre_night_program_snapshot(
         outcome = validate_cached_snapshot(
             date_value,
             data_root,
+        )
+        outcome = _require_cached_deadline_binding(
+            outcome,
+            deadline_metadata,
         )
 
         outcome["cached"] = False
