@@ -21,6 +21,10 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from boatrace_ai.ingestion.pre_night_deadlines import (
+    canonical_deadline_evidence_bytes,
+    validate_deadline_evidence,
+)
 from boatrace_ai.ingestion.pre_night_snapshots import (
     build_pre_night_as_of,
     build_snapshot_paths,
@@ -42,7 +46,7 @@ from boatrace_ai.pipelines.pre_night_prospective import (
 
 
 ORCHESTRATOR_VERSION = "pre_night_daily_orchestrator_v1"
-EXECUTION_CONTRACT_VERSION = "pre_night_daily_execution_v1"
+EXECUTION_CONTRACT_VERSION = "pre_night_daily_execution_v2"
 EXECUTION_MODE = "PRE_NIGHT_PROGRAM_ONLY"
 MANIFEST_STATUS_SUCCESS = "SUCCESS"
 MANIFEST_STATUS_DRY_RUN = "DRY_RUN"
@@ -205,6 +209,177 @@ def _artifact_record(
         "path": str(resolved),
         "size": int(resolved.stat().st_size),
         "sha256": sha256_file(resolved),
+    }
+
+
+def _canonical_deadline_binding(
+    evidence,
+    *,
+    error_class,
+    error_prefix,
+):
+    """Validate D1-A evidence and return normalized evidence and digest."""
+    if evidence is None:
+        raise error_class(
+            f"{error_prefix} deadline_evidence is missing"
+        )
+
+    try:
+        validated = validate_deadline_evidence(evidence)
+        canonical = canonical_deadline_evidence_bytes(validated)
+    except Exception as exc:
+        raise error_class(
+            f"{error_prefix} deadline_evidence is invalid"
+        ) from exc
+
+    return (
+        validated,
+        hashlib.sha256(canonical).hexdigest(),
+    )
+
+
+def _validate_deadline_binding_payload(
+    payload,
+    *,
+    error_prefix,
+):
+    """Validate evidence and its supplied canonical digest."""
+    if not isinstance(payload, dict):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} must be a JSON object"
+        )
+
+    if "deadline_evidence" not in payload:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} deadline_evidence is missing"
+        )
+
+    if "deadline_evidence_sha256" not in payload:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} deadline_evidence_sha256 is missing"
+        )
+
+    validated, computed = _canonical_deadline_binding(
+        payload["deadline_evidence"],
+        error_class=PreNightDailyIntegrityError,
+        error_prefix=error_prefix,
+    )
+
+    recorded = payload["deadline_evidence_sha256"]
+    if not isinstance(recorded, str) or recorded != computed:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} deadline_evidence_sha256 mismatch"
+        )
+
+    return validated, computed
+
+
+def _load_json_artifact(
+    path,
+    *,
+    data_root,
+    error_prefix,
+):
+    resolved = _path_within_root(
+        Path(path),
+        Path(data_root),
+    )
+
+    if not resolved.is_file():
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} does not exist: {resolved}"
+        )
+
+    try:
+        payload = json.loads(
+            resolved.read_text(encoding="utf-8")
+        )
+    except Exception as exc:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} is malformed: {resolved}"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} must be a JSON object"
+        )
+
+    return payload
+
+
+def _validate_daily_deadline_chain(
+    source_metadata_path,
+    pipeline_manifest_path,
+    *,
+    data_root,
+    execution_manifest=None,
+    requested_evidence=None,
+):
+    """Validate caller/source/pipeline/execution deadline identity."""
+    source_metadata = _load_json_artifact(
+        source_metadata_path,
+        data_root=data_root,
+        error_prefix="Source metadata",
+    )
+    pipeline_manifest = _load_json_artifact(
+        pipeline_manifest_path,
+        data_root=data_root,
+        error_prefix="Pipeline manifest",
+    )
+
+    source_evidence, source_digest = (
+        _validate_deadline_binding_payload(
+            source_metadata,
+            error_prefix="Source metadata",
+        )
+    )
+    pipeline_evidence, pipeline_digest = (
+        _validate_deadline_binding_payload(
+            pipeline_manifest,
+            error_prefix="Pipeline manifest",
+        )
+    )
+
+    if (
+        source_evidence != pipeline_evidence
+        or source_digest != pipeline_digest
+    ):
+        raise PreNightDailyIntegrityError(
+            "Source and pipeline deadline evidence differ"
+        )
+
+    if requested_evidence is not None:
+        requested_normalized, requested_digest = (
+            _canonical_deadline_binding(
+                requested_evidence,
+                error_class=PreNightDailyContractError,
+                error_prefix="Requested",
+            )
+        )
+        if (
+            requested_normalized != source_evidence
+            or requested_digest != source_digest
+        ):
+            raise PreNightDailyIntegrityError(
+                "Requested and cached deadline evidence differ"
+            )
+
+    if execution_manifest is not None:
+        if not isinstance(execution_manifest, dict):
+            raise PreNightDailyIntegrityError(
+                "Execution manifest must be a JSON object"
+            )
+        execution_digest = execution_manifest.get(
+            "deadline_evidence_sha256"
+        )
+        if execution_digest != source_digest:
+            raise PreNightDailyIntegrityError(
+                "Execution manifest deadline_evidence_sha256 mismatch"
+            )
+
+    return {
+        "deadline_evidence": source_evidence,
+        "deadline_evidence_sha256": source_digest,
     }
 
 
@@ -452,6 +627,12 @@ def validate_execution_manifest(
             "sha256": actual_sha256,
         }
 
+    _validate_daily_deadline_chain(
+        validated_artifacts["source_metadata"]["path"],
+        validated_artifacts["pipeline_manifest"]["path"],
+        data_root=root,
+        execution_manifest=manifest,
+    )
     _validate_execution_pipeline_pit_consistency(
         manifest,
         validated_artifacts["pipeline_manifest"]["path"],
@@ -478,6 +659,7 @@ def run_pre_night_daily(
     repository_commit_provider: Callable | None = None,
     prospective_writer: Callable | None = None,
     prospective_validator: Callable | None = None,
+    deadline_evidence=None,
 ) -> dict:
     """Run or plan one PRE_NIGHT program-only collection day."""
 
@@ -521,6 +703,21 @@ def run_pre_night_daily(
             root,
             race_date=date_value,
         )
+
+        if deadline_evidence is not None:
+            _, requested_digest = (
+                _canonical_deadline_binding(
+                    deadline_evidence,
+                    error_class=PreNightDailyContractError,
+                    error_prefix="Requested",
+                )
+            )
+            if requested_digest != cached["manifest"].get(
+                "deadline_evidence_sha256"
+            ):
+                raise PreNightDailyIntegrityError(
+                    "Requested and cached deadline evidence differ"
+                )
 
         commit_provider = (
             repository_commit_provider
@@ -591,6 +788,14 @@ def run_pre_night_daily(
             f"as_of_time={as_of_time.isoformat()}"
         )
 
+    validated_deadline_evidence, requested_deadline_sha256 = (
+        _canonical_deadline_binding(
+            deadline_evidence,
+            error_class=PreNightDailyContractError,
+            error_prefix="Requested",
+        )
+    )
+
     collector_function = (
         collector
         or collect_pre_night_program_snapshot
@@ -604,6 +809,7 @@ def run_pre_night_daily(
         date_value,
         root,
         now_fn=clock,
+        deadline_evidence=validated_deadline_evidence,
     )
 
     pipeline_result = pipeline_function(
@@ -639,6 +845,18 @@ def run_pre_night_daily(
         data_root=root,
         race_date=date_value,
     )
+    deadline_binding = _validate_daily_deadline_chain(
+        source_metadata,
+        pipeline_manifest,
+        data_root=root,
+        requested_evidence=validated_deadline_evidence,
+    )
+    if deadline_binding["deadline_evidence_sha256"] != (
+        requested_deadline_sha256
+    ):
+        raise PreNightDailyIntegrityError(
+            "Requested deadline evidence digest mismatch"
+        )
     completed_at = require_aware_datetime(
         clock(),
         "completed_at",
@@ -672,6 +890,9 @@ def run_pre_night_daily(
             EXECUTION_CONTRACT_VERSION
         ),
         "as_of_time": as_of_time.isoformat(),
+        "deadline_evidence_sha256": (
+            deadline_binding["deadline_evidence_sha256"]
+        ),
         "started_at": current_time.isoformat(),
         "completed_at": completed_at.isoformat(),
         "dry_run": False,
