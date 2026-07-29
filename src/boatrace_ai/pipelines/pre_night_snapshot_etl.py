@@ -12,6 +12,10 @@ import pandas as pd
 from boatrace_ai.ingestion.daily_archives import (
     extract_archive,
 )
+from boatrace_ai.ingestion.pre_night_deadlines import (
+    canonical_deadline_evidence_bytes,
+    validate_deadline_evidence,
+)
 from boatrace_ai.ingestion.pre_night_snapshots import (
     AS_OF_RULE,
     CONTRACT_VERSION,
@@ -58,6 +62,7 @@ PROVENANCE_COLUMNS = {
     "source_max_time",
     "feature_collector_version",
     "provenance_status",
+    "deadline_evidence_sha256",
 }
 
 PROHIBITED_COLUMNS = {
@@ -365,6 +370,61 @@ def validate_program_structure(
     }
 
 
+
+def _validate_deadline_binding(
+    metadata: dict,
+) -> tuple[dict, str]:
+    """Validate and recompute the Snapshot v2 deadline binding."""
+    if not isinstance(metadata, dict):
+        raise PreNightFeatureContractError(
+            "source metadata must be a dictionary"
+        )
+
+    if "deadline_evidence" not in metadata:
+        raise PreNightFeatureContractError(
+            "deadline_evidence is missing"
+        )
+
+    if "deadline_evidence_sha256" not in metadata:
+        raise PreNightFeatureContractError(
+            "deadline_evidence_sha256 is missing"
+        )
+
+    recorded_sha256 = metadata[
+        "deadline_evidence_sha256"
+    ]
+
+    if not isinstance(recorded_sha256, str):
+        raise PreNightFeatureContractError(
+            "deadline_evidence_sha256 must be a string"
+        )
+
+    try:
+        validated_evidence = validate_deadline_evidence(
+            metadata["deadline_evidence"]
+        )
+        canonical_bytes = (
+            canonical_deadline_evidence_bytes(
+                validated_evidence
+            )
+        )
+    except Exception as error:
+        raise PreNightFeatureContractError(
+            "deadline_evidence validation failed"
+        ) from error
+
+    computed_sha256 = hashlib.sha256(
+        canonical_bytes
+    ).hexdigest()
+
+    if recorded_sha256 != computed_sha256:
+        raise PreNightFeatureContractError(
+            "deadline_evidence_sha256 mismatch"
+        )
+
+    return validated_evidence, computed_sha256
+
+
 def attach_feature_provenance(
     frame: pd.DataFrame,
     metadata: dict,
@@ -480,6 +540,10 @@ def attach_feature_provenance(
             "archive_sha256 is missing"
         )
 
+    _, deadline_evidence_sha256 = (
+        _validate_deadline_binding(metadata)
+    )
+
     output = frame.copy()
 
     output["as_of_time"] = as_of_time
@@ -511,6 +575,9 @@ def attach_feature_provenance(
     ] = metadata["collector_version"]
     output["provenance_status"] = (
         "ELIGIBLE"
+    )
+    output["deadline_evidence_sha256"] = (
+        deadline_evidence_sha256
     )
 
     return output
@@ -624,6 +691,17 @@ def validate_point_in_time_frame(
             "source SHA-256"
         )
 
+    deadline_sha_counts = int(
+        frame["deadline_evidence_sha256"]
+        .nunique(dropna=False)
+    )
+
+    if deadline_sha_counts != 1:
+        raise PreNightPointInTimeError(
+            "Expected exactly one deadline "
+            "evidence SHA-256"
+        )
+
     return {
         "future_source_rows": (
             future_source_rows
@@ -647,6 +725,13 @@ def validate_existing_output(
     paths: dict[str, Path],
     source_metadata: dict,
 ) -> dict:
+    (
+        source_deadline_evidence,
+        source_deadline_sha256,
+    ) = _validate_deadline_binding(
+        source_metadata
+    )
+
     parquet_path = paths["parquet"]
     manifest_path = paths["manifest"]
 
@@ -683,6 +768,33 @@ def validate_existing_output(
             "Output contract version mismatch"
         )
 
+    try:
+        (
+            manifest_deadline_evidence,
+            manifest_deadline_sha256,
+        ) = _validate_deadline_binding(manifest)
+    except PreNightFeatureContractError as error:
+        raise PreNightOutputIntegrityError(
+            "Cached manifest deadline evidence is invalid"
+        ) from error
+
+    if (
+        manifest_deadline_evidence
+        != source_deadline_evidence
+    ):
+        raise PreNightOutputIntegrityError(
+            "Cached manifest deadline evidence mismatch"
+        )
+
+    if (
+        manifest_deadline_sha256
+        != source_deadline_sha256
+    ):
+        raise PreNightOutputIntegrityError(
+            "Cached manifest deadline evidence "
+            "SHA-256 mismatch"
+        )
+
     actual_sha256 = sha256_file(
         parquet_path
     )
@@ -717,6 +829,20 @@ def validate_existing_output(
     pit = validate_point_in_time_frame(
         frame
     )
+
+    parquet_deadline_values = (
+        frame["deadline_evidence_sha256"]
+        .drop_duplicates()
+        .tolist()
+    )
+
+    if parquet_deadline_values != [
+        source_deadline_sha256
+    ]:
+        raise PreNightOutputIntegrityError(
+            "Cached Parquet deadline evidence "
+            "SHA-256 mismatch"
+        )
 
     if int(manifest["row_count"]) != len(frame):
         raise PreNightOutputIntegrityError(
@@ -783,6 +909,10 @@ def build_pre_night_program_parquet(
     )
 
     metadata = snapshot["metadata"]
+    (
+        deadline_evidence,
+        deadline_evidence_sha256,
+    ) = _validate_deadline_binding(metadata)
     source_paths = snapshot["paths"]
 
     if (
@@ -928,6 +1058,12 @@ def build_pre_night_program_parquet(
         ),
         "collector_version": (
             metadata["collector_version"]
+        ),
+        "deadline_evidence": (
+            deadline_evidence
+        ),
+        "deadline_evidence_sha256": (
+            deadline_evidence_sha256
         ),
         "source_archive_path": str(
             source_paths["archive"]
