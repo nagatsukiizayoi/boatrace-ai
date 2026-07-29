@@ -13,6 +13,7 @@ RACE_DATE = "2026-08-10"
 AS_OF_TIME = "2026-08-09T21:30:00+09:00"
 COMPLETED_AT = "2026-08-09T21:05:00+09:00"
 REPOSITORY_COMMIT = "a" * 40
+DEADLINE_EVIDENCE_SHA256 = "d" * 64
 
 
 def file_record(path):
@@ -67,6 +68,7 @@ def build_context(tmp_path):
         "race_date": RACE_DATE,
         "as_of_time": AS_OF_TIME,
         **eligibility_fields(),
+        "deadline_evidence_sha256": DEADLINE_EVIDENCE_SHA256,
     }
     pipeline_manifest.write_text(
         json.dumps(pipeline_payload),
@@ -94,6 +96,7 @@ def build_context(tmp_path):
         "dry_run": False,
         "artifacts": execution_artifacts,
         **eligibility_fields(),
+        "deadline_evidence_sha256": DEADLINE_EVIDENCE_SHA256,
     }
 
     execution_path = (
@@ -572,3 +575,430 @@ def test_manifest_filename_tampering_is_rejected(tmp_path):
             wrong,
             context["root"],
         )
+
+
+# BEGIN PHASE1_D1B4_TESTS
+
+
+def _d1b4_build_with_execution(context, execution_manifest):
+    import copy
+
+    validation = copy.deepcopy(context["execution_validation"])
+    validation["manifest"] = copy.deepcopy(execution_manifest)
+
+    return prospective.build_prospective_manifest(
+        race_date=RACE_DATE,
+        data_root=context["root"],
+        execution_manifest_path=context["execution_path"],
+        execution_validation=validation,
+        repository_commit=REPOSITORY_COMMIT,
+        created_at=COMPLETED_AT,
+    )
+
+
+def _d1b4_pipeline_payload(context):
+    return json.loads(
+        context["artifact_paths"]["pipeline_manifest"].read_text(
+            encoding="utf-8"
+        )
+    )
+
+
+def test_d1b4_t01_manifest_copies_execution_deadline_digest(tmp_path):
+    context = build_context(tmp_path)
+
+    assert context["manifest"]["deadline_evidence_sha256"] == (
+        DEADLINE_EVIDENCE_SHA256
+    )
+    assert context["manifest"]["deadline_evidence_sha256"] == (
+        context["execution_validation"]["manifest"][
+            "deadline_evidence_sha256"
+        ]
+    )
+
+
+def test_d1b4_t02_exact_v2_top_level_key_set(tmp_path):
+    context = build_context(tmp_path)
+
+    assert set(context["manifest"]) == prospective.TOP_LEVEL_KEYS
+    assert "deadline_evidence_sha256" in prospective.TOP_LEVEL_KEYS
+
+
+def test_d1b4_t03_contract_version_is_v2(tmp_path):
+    context = build_context(tmp_path)
+
+    assert prospective.CONTRACT_VERSION == (
+        "pre_night_prospective_dataset_v2"
+    )
+    assert context["manifest"]["contract_version"] == (
+        "pre_night_prospective_dataset_v2"
+    )
+
+
+def test_d1b4_t04_digest_changes_run_id():
+    artifacts = {
+        name: {
+            "path": f"/tmp/{name}",
+            "size": 1,
+            "sha256": "a" * 64,
+        }
+        for name in prospective.REQUIRED_ARTIFACTS
+    }
+
+    first = prospective._compute_run_id(
+        race_date=RACE_DATE,
+        repository_commit=REPOSITORY_COMMIT,
+        deadline_evidence_sha256="d" * 64,
+        artifacts=artifacts,
+    )
+    second = prospective._compute_run_id(
+        race_date=RACE_DATE,
+        repository_commit=REPOSITORY_COMMIT,
+        deadline_evidence_sha256="e" * 64,
+        artifacts=artifacts,
+    )
+
+    assert first != second
+
+
+def test_d1b4_t05_missing_prospective_digest_fails_closed(tmp_path):
+    context = build_context(tmp_path)
+    manifest = dict(context["manifest"])
+    manifest.pop("deadline_evidence_sha256")
+
+    with pytest.raises(
+        prospective.PreNightProspectiveContractError,
+        match="keys mismatch|deadline_evidence_sha256",
+    ):
+        prospective.write_prospective_manifest(
+            manifest,
+            context["root"],
+        )
+
+
+def test_d1b4_t06_malformed_prospective_digest_fails_closed(tmp_path):
+    context = build_context(tmp_path)
+    manifest = dict(context["manifest"])
+    manifest["deadline_evidence_sha256"] = "ABC"
+
+    with pytest.raises(
+        prospective.PreNightProspectiveContractError,
+        match="deadline_evidence_sha256",
+    ):
+        prospective.write_prospective_manifest(
+            manifest,
+            context["root"],
+        )
+
+
+def test_d1b4_t07_missing_execution_digest_fails_closed(tmp_path):
+    import copy
+
+    context = build_context(tmp_path)
+    execution = copy.deepcopy(
+        context["execution_validation"]["manifest"]
+    )
+    execution.pop("deadline_evidence_sha256")
+
+    with pytest.raises(
+        prospective.PreNightProspectiveContractError,
+        match="execution.deadline_evidence_sha256",
+    ):
+        _d1b4_build_with_execution(context, execution)
+
+
+def test_d1b4_t08_malformed_execution_digest_fails_closed(tmp_path):
+    import copy
+
+    context = build_context(tmp_path)
+    execution = copy.deepcopy(
+        context["execution_validation"]["manifest"]
+    )
+    execution["deadline_evidence_sha256"] = "F" * 64
+
+    with pytest.raises(
+        prospective.PreNightProspectiveContractError,
+        match="execution.deadline_evidence_sha256",
+    ):
+        _d1b4_build_with_execution(context, execution)
+
+
+def test_d1b4_t09_prospective_execution_mismatch_fails_closed(tmp_path):
+    context = build_context(tmp_path)
+    manifest = dict(context["manifest"])
+    manifest["deadline_evidence_sha256"] = "e" * 64
+
+    with pytest.raises(
+        prospective.PreNightProspectiveIntegrityError,
+        match="deadline|SHA-256|differ",
+    ):
+        prospective.write_prospective_manifest(
+            manifest,
+            context["root"],
+        )
+
+
+def test_d1b4_t10_missing_pipeline_digest_fails_closed(tmp_path):
+    import copy
+
+    context = build_context(tmp_path)
+    prospective_payload = copy.deepcopy(context["manifest"])
+    execution = copy.deepcopy(
+        context["execution_validation"]["manifest"]
+    )
+    pipeline = _d1b4_pipeline_payload(context)
+    pipeline.pop("deadline_evidence_sha256")
+
+    with pytest.raises(
+        prospective.PreNightProspectiveContractError,
+        match="pipeline.deadline_evidence_sha256",
+    ):
+        prospective._validate_pit_binding(
+            prospective_payload,
+            execution,
+            pipeline,
+        )
+
+
+def test_d1b4_t11_malformed_pipeline_digest_fails_closed(tmp_path):
+    import copy
+
+    context = build_context(tmp_path)
+    prospective_payload = copy.deepcopy(context["manifest"])
+    execution = copy.deepcopy(
+        context["execution_validation"]["manifest"]
+    )
+    pipeline = _d1b4_pipeline_payload(context)
+    pipeline["deadline_evidence_sha256"] = "invalid"
+
+    with pytest.raises(
+        prospective.PreNightProspectiveContractError,
+        match="pipeline.deadline_evidence_sha256",
+    ):
+        prospective._validate_pit_binding(
+            prospective_payload,
+            execution,
+            pipeline,
+        )
+
+
+def test_d1b4_t12_three_way_digest_mismatch_fails_closed(tmp_path):
+    import copy
+
+    context = build_context(tmp_path)
+    prospective_payload = copy.deepcopy(context["manifest"])
+    execution = copy.deepcopy(
+        context["execution_validation"]["manifest"]
+    )
+    pipeline = _d1b4_pipeline_payload(context)
+    pipeline["deadline_evidence_sha256"] = "e" * 64
+
+    with pytest.raises(
+        prospective.PreNightProspectiveIntegrityError,
+        match="deadline|SHA-256|differ",
+    ):
+        prospective._validate_pit_binding(
+            prospective_payload,
+            execution,
+            pipeline,
+        )
+
+
+def test_d1b4_t13_matching_three_way_digest_validates(tmp_path):
+    import copy
+
+    context = build_context(tmp_path)
+    prospective_payload = copy.deepcopy(context["manifest"])
+    execution = copy.deepcopy(
+        context["execution_validation"]["manifest"]
+    )
+    pipeline = _d1b4_pipeline_payload(context)
+
+    assert prospective._validate_pit_binding(
+        prospective_payload,
+        execution,
+        pipeline,
+    ) is None
+
+
+def test_d1b4_t14_cached_manifest_missing_digest_is_rejected(tmp_path):
+    context = build_context(tmp_path)
+    written = prospective.write_prospective_manifest(
+        context["manifest"],
+        context["root"],
+    )
+    path = written["manifest_path"]
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload.pop("deadline_evidence_sha256")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        prospective.PreNightProspectiveContractError,
+        match="keys mismatch|deadline_evidence_sha256",
+    ):
+        prospective.validate_prospective_manifest(
+            path,
+            context["root"],
+        )
+
+
+def test_d1b4_t15_cached_manifest_digest_mismatch_is_rejected(tmp_path):
+    context = build_context(tmp_path)
+    written = prospective.write_prospective_manifest(
+        context["manifest"],
+        context["root"],
+    )
+    path = written["manifest_path"]
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["deadline_evidence_sha256"] = "e" * 64
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        prospective.PreNightProspectiveIntegrityError,
+        match="deadline|SHA-256|differ",
+    ):
+        prospective.validate_prospective_manifest(
+            path,
+            context["root"],
+        )
+
+
+def test_d1b4_t16_no_full_deadline_payload_is_serialized(tmp_path):
+    context = build_context(tmp_path)
+    manifest = context["manifest"]
+    serialized = json.dumps(manifest, sort_keys=True)
+
+    assert {
+        "deadline_evidence",
+        "raw_source_bytes",
+        "raw_html",
+        "canonical_deadline_evidence_bytes",
+        "canonical_bytes",
+        "eligibility_cutoff_at",
+        "safety_margin_seconds",
+    }.issubset(prospective.FORBIDDEN_KEYS)
+
+    assert manifest["deadline_evidence_sha256"] == (
+        DEADLINE_EVIDENCE_SHA256
+    )
+    assert "deadline_evidence" not in manifest
+    assert "raw_source_bytes" not in serialized
+    assert "raw_html" not in serialized
+    assert "canonical_deadline_evidence_bytes" not in serialized
+    assert "canonical_bytes" not in serialized
+    assert "eligibility_cutoff_at" not in serialized
+    assert "safety_margin_seconds" not in serialized
+
+
+def test_d1b4_t17_public_function_signatures_are_preserved():
+    import inspect
+
+    expected = {
+        "build_prospective_directory": [
+            "race_date",
+            "data_root",
+        ],
+        "build_prospective_manifest_path": [
+            "manifest",
+            "data_root",
+        ],
+        "build_prospective_manifest": [
+            "race_date",
+            "data_root",
+            "execution_manifest_path",
+            "execution_validation",
+            "repository_commit",
+            "created_at",
+        ],
+        "validate_prospective_manifest": [
+            "manifest_path",
+            "data_root",
+            "race_date",
+            "expected_repository_commit",
+        ],
+        "write_prospective_manifest": [
+            "manifest",
+            "data_root",
+        ],
+        "resolve_repository_commit": [
+            "repository_root",
+        ],
+    }
+
+    for name, parameters in expected.items():
+        function = getattr(prospective, name)
+        assert list(inspect.signature(function).parameters) == parameters
+
+
+def test_d1b4_t18_return_container_shapes_are_preserved(tmp_path):
+    context = build_context(tmp_path)
+
+    assert set(context["manifest"]) == prospective.TOP_LEVEL_KEYS
+
+    written = prospective.write_prospective_manifest(
+        context["manifest"],
+        context["root"],
+    )
+
+    assert set(written) == {
+        "manifest_path",
+        "manifest",
+        "artifacts",
+        "execution_manifest",
+        "pipeline_manifest",
+        "run_id",
+        "race_date",
+        "repository_commit",
+        "cached",
+        "skipped",
+    }
+
+
+def test_d1b4_t19_storage_directory_remains_v1(tmp_path):
+    directory = prospective.build_prospective_directory(
+        RACE_DATE,
+        tmp_path,
+    )
+
+    assert directory == (
+        tmp_path
+        / "manifests"
+        / "pre_night_prospective_v1"
+        / RACE_DATE
+    )
+
+
+def test_d1b4_t20_validation_failure_precedes_publication(tmp_path):
+    context = build_context(tmp_path)
+    valid_manifest = context["manifest"]
+    destination = prospective.build_prospective_manifest_path(
+        valid_manifest,
+        context["root"],
+    )
+
+    invalid_manifest = dict(valid_manifest)
+    invalid_manifest.pop("deadline_evidence_sha256")
+
+    with pytest.raises(
+        prospective.PreNightProspectiveContractError,
+        match="keys mismatch|deadline_evidence_sha256",
+    ):
+        prospective.write_prospective_manifest(
+            invalid_manifest,
+            context["root"],
+        )
+
+    assert not destination.exists()
+
+    directory = prospective.build_prospective_directory(
+        RACE_DATE,
+        context["root"],
+    )
+
+    assert (
+        not directory.exists()
+        or list(directory.glob("*.tmp-*")) == []
+    )
+
+
+# END PHASE1_D1B4_TESTS

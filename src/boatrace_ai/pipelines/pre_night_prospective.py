@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-CONTRACT_VERSION = "pre_night_prospective_dataset_v1"
+CONTRACT_VERSION = "pre_night_prospective_dataset_v2"
 ARTIFACT_TYPE = "pre_night_program_only_prospective_run"
 
 TOP_LEVEL_KEYS = {
@@ -31,6 +31,7 @@ TOP_LEVEL_KEYS = {
     "eligible_for_pre_night",
     "pit_eligibility",
     "artifacts",
+    "deadline_evidence_sha256",
 }
 
 REQUIRED_ARTIFACTS = {
@@ -63,6 +64,13 @@ FORBIDDEN_KEYS = {
     "recommendation",
     "recommendations",
     "ev",
+    "canonical_bytes",
+    "canonical_deadline_evidence_bytes",
+    "deadline_evidence",
+    "eligibility_cutoff_at",
+    "raw_html",
+    "raw_source_bytes",
+    "safety_margin_seconds",
 }
 
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -147,6 +155,12 @@ def require_sha256(
         )
 
     normalized = value.strip().lower()
+
+    if value != normalized:
+        raise PreNightProspectiveContractError(
+            f"{field_name} must contain exactly "
+            "64 lowercase hex characters"
+        )
 
     if SHA256_PATTERN.fullmatch(normalized) is None:
         raise PreNightProspectiveContractError(
@@ -335,6 +349,7 @@ def _run_id_material(
     *,
     race_date: str,
     repository_commit: str,
+    deadline_evidence_sha256,
     artifacts: Mapping[str, Mapping[str, Any]],
 ) -> dict:
     return {
@@ -344,6 +359,7 @@ def _run_id_material(
             name: artifacts[name]["sha256"]
             for name in sorted(REQUIRED_ARTIFACTS)
         },
+        "deadline_evidence_sha256": deadline_evidence_sha256,
     }
 
 
@@ -351,12 +367,14 @@ def _compute_run_id(
     *,
     race_date: str,
     repository_commit: str,
+    deadline_evidence_sha256,
     artifacts: Mapping[str, Mapping[str, Any]],
 ) -> str:
     material = _run_id_material(
         race_date=race_date,
         repository_commit=repository_commit,
         artifacts=artifacts,
+        deadline_evidence_sha256=deadline_evidence_sha256,
     )
 
     return hashlib.sha256(
@@ -369,6 +387,30 @@ def _validate_pit_binding(
     execution_manifest: Mapping[str, Any],
     pipeline_manifest: Mapping[str, Any],
 ) -> None:
+    prospective_deadline_sha256 = require_sha256(
+        prospective.get("deadline_evidence_sha256"),
+        "deadline_evidence_sha256",
+    )
+    execution_deadline_sha256 = require_sha256(
+        execution_manifest.get("deadline_evidence_sha256"),
+        "execution.deadline_evidence_sha256",
+    )
+    pipeline_deadline_sha256 = require_sha256(
+        pipeline_manifest.get("deadline_evidence_sha256"),
+        "pipeline.deadline_evidence_sha256",
+    )
+
+    if (
+        prospective_deadline_sha256
+        != execution_deadline_sha256
+        or execution_deadline_sha256
+        != pipeline_deadline_sha256
+    ):
+        raise PreNightProspectiveIntegrityError(
+            "Prospective, execution, and pipeline deadline "
+            "evidence SHA-256 values differ"
+        )
+
     if prospective.get("eligible_for_pre_night") is not True:
         raise PreNightProspectiveContractError(
             "eligible_for_pre_night must be true"
@@ -561,6 +603,11 @@ def _validate_manifest_payload(
             "Unsupported prospective contract_version"
         )
 
+    deadline_evidence_sha256 = require_sha256(
+        manifest["deadline_evidence_sha256"],
+        "deadline_evidence_sha256",
+    )
+
     if manifest["artifact_type"] != ARTIFACT_TYPE:
         raise PreNightProspectiveContractError(
             "Unexpected prospective artifact_type"
@@ -744,6 +791,7 @@ def _validate_manifest_payload(
         race_date=date_text,
         repository_commit=repository_commit,
         artifacts=artifacts,
+        deadline_evidence_sha256=deadline_evidence_sha256,
     )
 
     actual_run_id = require_sha256(
@@ -801,6 +849,11 @@ def build_prospective_manifest(
             "execution_validation.manifest must be dict"
         )
 
+    deadline_evidence_sha256 = require_sha256(
+        execution_manifest.get("deadline_evidence_sha256"),
+        "execution.deadline_evidence_sha256",
+    )
+
     if not isinstance(execution_artifacts, dict):
         raise PreNightProspectiveContractError(
             "execution_validation.artifacts must be dict"
@@ -849,6 +902,7 @@ def build_prospective_manifest(
         race_date=date_text,
         repository_commit=repository_commit,
         artifacts=artifacts,
+        deadline_evidence_sha256=deadline_evidence_sha256,
     )
 
     manifest = {
@@ -869,6 +923,7 @@ def build_prospective_manifest(
             )
         ),
         "artifacts": artifacts,
+        "deadline_evidence_sha256": deadline_evidence_sha256,
     }
 
     _validate_manifest_payload(
