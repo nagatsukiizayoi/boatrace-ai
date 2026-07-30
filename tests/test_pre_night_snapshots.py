@@ -1,3 +1,4 @@
+import hashlib
 import datetime as dt
 import json
 from pathlib import Path
@@ -1353,3 +1354,974 @@ def test_d1b1_t14_deadline_evidence_is_keyword_only():
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
     assert parameter.default is None
 # END PHASE1_D1B1_TESTS
+
+
+# D1B5-STAGE1-PUBLICATION-TESTS-BEGIN
+
+
+def _d1b5_publication_contract(
+    monkeypatch,
+    *,
+    race_date="2026-07-30",
+    venue_code="01",
+    extra=None,
+):
+    payload = {
+        "contract_version": "test-deadline-evidence-v1",
+        "race_date": race_date,
+        "venue_code": venue_code,
+        "race_deadlines": [],
+    }
+
+    if extra:
+        payload.update(extra)
+
+    def validate(value):
+        if not isinstance(value, dict):
+            raise ValueError("invalid deadline evidence")
+        return dict(value)
+
+    def canonicalize(value):
+        normalized = validate(value)
+        text = json.dumps(
+            normalized,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        return (text + "\n").encode("utf-8")
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        validate,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "canonical_deadline_evidence_bytes",
+        canonicalize,
+    )
+
+    return payload, canonicalize(payload)
+
+
+def _d1b5_destination(tmp_path, race_date, venue_code):
+    year, month, day = race_date.split("-")
+    return (
+        tmp_path
+        / "prospective"
+        / "pre_night"
+        / "deadline_evidence"
+        / year
+        / month
+        / day
+        / venue_code
+        / "deadline_evidence.json"
+    )
+
+
+def test_d1b5_s1_r1_t01_publishes_exact_per_venue_artifact(
+    tmp_path,
+    monkeypatch,
+):
+    payload, canonical = _d1b5_publication_contract(
+        monkeypatch
+    )
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    destination = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+
+    assert result["publication_status"] == "CREATED"
+    assert result["cached"] is False
+    assert result["race_date"] == "2026-07-30"
+    assert result["venue_code"] == "01"
+    assert destination.read_bytes() == canonical
+
+
+def test_d1b5_s1_r1_t02_uses_exact_canonical_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    payload, canonical = _d1b5_publication_contract(
+        monkeypatch
+    )
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    assert (
+        result["paths"]["deadline_evidence"].read_bytes()
+        == canonical
+    )
+    assert canonical.endswith(b"\n")
+    assert not canonical.endswith(b"\n\n")
+
+
+def test_d1b5_s1_r1_t03_returns_exact_byte_digest(
+    tmp_path,
+    monkeypatch,
+):
+    payload, canonical = _d1b5_publication_contract(
+        monkeypatch
+    )
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    assert result["deadline_evidence_sha256"] == (
+        hashlib.sha256(canonical).hexdigest()
+    )
+    assert result["byte_length"] == len(canonical)
+
+
+def test_d1b5_s1_r1_t04_creates_parent_directories(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    assert result["paths"]["directory"].is_dir()
+    assert result["paths"]["deadline_evidence"].is_file()
+
+
+def test_d1b5_s1_r1_t05_reuses_identical_cache(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    first = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+    before = first["paths"]["deadline_evidence"].stat().st_mtime_ns
+
+    second = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+    after = second["paths"]["deadline_evidence"].stat().st_mtime_ns
+
+    assert second["cached"] is True
+    assert second["publication_status"] == "VALIDATED_REUSE"
+    assert before == after
+
+
+def test_d1b5_s1_r1_t06_rejects_different_existing_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    destination = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+    destination.parent.mkdir(parents=True)
+    destination.write_text(
+        json.dumps(
+            {
+                **payload,
+                "contract_version": "different",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(snapshots.PreNightCacheError):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+
+def test_d1b5_s1_r1_t07_rejects_malformed_cached_json(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    destination = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+    destination.parent.mkdir(parents=True)
+    destination.write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(
+        snapshots.PreNightCacheError,
+        match="valid UTF-8 JSON",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+
+def test_d1b5_s1_r1_t08_rejects_noncanonical_cached_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    destination = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+    destination.parent.mkdir(parents=True)
+    destination.write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        snapshots.PreNightCacheError,
+        match="non-canonical",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+
+def test_d1b5_s1_r1_t09_rejects_cached_race_date_mismatch(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    conflicting = {
+        **payload,
+        "race_date": "2026-07-31",
+    }
+
+    destination = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+    destination.parent.mkdir(parents=True)
+    destination.write_text(
+        json.dumps(
+            conflicting,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        snapshots.PreNightCacheError,
+        match="race_date mismatch",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+
+def test_d1b5_s1_r1_t10_rejects_cached_venue_mismatch(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    conflicting = {
+        **payload,
+        "venue_code": "02",
+    }
+
+    destination = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+    destination.parent.mkdir(parents=True)
+    destination.write_text(
+        json.dumps(
+            conflicting,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        snapshots.PreNightCacheError,
+        match="venue_code mismatch",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+
+@pytest.mark.parametrize(
+    ("race_date", "venue_code"),
+    [
+        ("not-a-date", "01"),
+        ("2026-07-30", "../x"),
+        ("2026-07-30", "00"),
+        ("2026-07-30", "25"),
+        ("2026-07-30", "1"),
+    ],
+)
+def test_d1b5_s1_r1_t11_rejects_invalid_binding_keys(
+    tmp_path,
+    monkeypatch,
+    race_date,
+    venue_code,
+):
+    payload, _ = _d1b5_publication_contract(
+        monkeypatch,
+        race_date=race_date,
+        venue_code=venue_code,
+    )
+
+    with pytest.raises(snapshots.PreNightContractError):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+
+def test_d1b5_s1_r1_t12_propagates_duplicate_race_rejection(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    def reject(_):
+        raise ValueError("duplicate race_no")
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        reject,
+    )
+
+    with pytest.raises(ValueError, match="duplicate race_no"):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+    assert not (tmp_path / "prospective").exists()
+
+
+def test_d1b5_s1_r1_t13_propagates_child_identity_rejection(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    def reject(_):
+        raise ValueError("child race identity mismatch")
+
+    monkeypatch.setattr(
+        snapshots,
+        "validate_deadline_evidence",
+        reject,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="child race identity mismatch",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+
+def test_d1b5_s1_r1_t14_rejects_forbidden_raw_payload(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(
+        monkeypatch,
+        extra={"raw_html": "<html></html>"},
+    )
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="forbidden raw payload",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+
+def test_d1b5_s1_r1_t15_rejects_symlink_data_root(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    actual_root = tmp_path / "actual"
+    actual_root.mkdir()
+    linked_root = tmp_path / "linked"
+
+    try:
+        linked_root.symlink_to(
+            actual_root,
+            target_is_directory=True,
+        )
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink unavailable")
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="symlink",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            linked_root,
+            deadline_evidence=payload,
+        )
+
+
+def test_d1b5_s1_r1_t16_success_leaves_no_temp_or_lock(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    directory = result["paths"]["directory"]
+    assert not (
+        directory / ".deadline_evidence.json.tmp"
+    ).exists()
+    assert not (
+        directory / ".deadline_evidence.lock"
+    ).exists()
+
+
+def test_d1b5_s1_r1_t17_failure_cleans_current_temp_and_lock(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    def fail_link(*_args, **_kwargs):
+        raise OSError("injected publication failure")
+
+    monkeypatch.setattr(snapshots.os, "link", fail_link)
+
+    with pytest.raises(
+        snapshots.PreNightIntegrityError,
+        match="atomic publication failed",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+    directory = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    ).parent
+
+    assert not (
+        directory / ".deadline_evidence.json.tmp"
+    ).exists()
+    assert not (
+        directory / ".deadline_evidence.lock"
+    ).exists()
+
+
+def test_d1b5_s1_r1_t18_existing_lock_fails_closed(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    directory = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    ).parent
+    directory.mkdir(parents=True)
+
+    lock = directory / ".deadline_evidence.lock"
+    lock.write_text("unknown owner", encoding="utf-8")
+
+    with pytest.raises(
+        snapshots.PreNightSnapshotError,
+        match="lock exists",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+    assert lock.read_text(encoding="utf-8") == "unknown owner"
+
+
+def test_d1b5_s1_r1_t19_performs_post_publish_validation(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    original = (
+        snapshots
+        ._validate_cached_deadline_evidence_artifact
+    )
+    calls = {"count": 0}
+
+    def counted(**kwargs):
+        calls["count"] += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(
+        snapshots,
+        "_validate_cached_deadline_evidence_artifact",
+        counted,
+    )
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    assert result["publication_status"] == "CREATED"
+    assert calls["count"] == 1
+
+
+def test_d1b5_s1_r1_t20_does_not_publish_stage2_artifacts(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    files = [
+        path.name
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    ]
+
+    assert files == ["deadline_evidence.json"]
+    assert "deadline_evidence_collection.json" not in files
+    assert "execution_manifest.json" not in files
+    assert "prospective_manifest.json" not in files
+    assert result["relative_path"] == (
+        "prospective/pre_night/deadline_evidence/"
+        "2026/07/30/01/deadline_evidence.json"
+    )
+
+
+def test_d1b5_stage1_public_api_is_keyword_only():
+    import inspect
+
+    signature = inspect.signature(
+        snapshots.publish_pre_night_deadline_evidence
+    )
+
+    assert list(signature.parameters) == [
+        "data_root",
+        "deadline_evidence",
+    ]
+    assert signature.parameters[
+        "deadline_evidence"
+    ].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+# D1B5-S1-I2-FOCUSED-TESTS-BEGIN
+
+
+def test_d1b5_s1_i2_unique_temporary_paths_are_generated(
+    tmp_path,
+):
+    first = snapshots._d1b5_deadline_evidence_paths(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+    second = snapshots._d1b5_deadline_evidence_paths(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+
+    assert first["temporary"] != second["temporary"]
+    assert first["temporary"].parent == first["directory"]
+    assert second["temporary"].parent == second["directory"]
+    assert first["temporary"].name.startswith(
+        ".deadline_evidence.json."
+    )
+    assert first["temporary"].name.endswith(".tmp")
+
+
+def test_d1b5_s1_i2_preserves_unrelated_temporary_file(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+    destination = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+    destination.parent.mkdir(parents=True)
+
+    unrelated = (
+        destination.parent
+        / ".deadline_evidence.json.unrelated.tmp"
+    )
+    unrelated.write_bytes(b"unrelated")
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    assert result["publication_status"] == "CREATED"
+    assert unrelated.read_bytes() == b"unrelated"
+    assert list(
+        destination.parent.glob(
+            ".deadline_evidence.json.*.tmp"
+        )
+    ) == [unrelated]
+
+
+def test_d1b5_s1_i2_parent_directory_fsync_is_attempted(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+    calls = []
+
+    original = snapshots._d1b5_fsync_directory
+
+    def counted(directory):
+        calls.append(directory)
+        return original(directory)
+
+    monkeypatch.setattr(
+        snapshots,
+        "_d1b5_fsync_directory",
+        counted,
+    )
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    assert calls == [result["paths"]["directory"]]
+
+
+def test_d1b5_s1_i2_directory_fsync_failure_is_fail_closed(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    def fail_directory_fsync(_directory):
+        raise snapshots.PreNightIntegrityError(
+            "injected directory fsync failure"
+        )
+
+    monkeypatch.setattr(
+        snapshots,
+        "_d1b5_fsync_directory",
+        fail_directory_fsync,
+    )
+
+    with pytest.raises(
+        snapshots.PreNightIntegrityError,
+        match="injected directory fsync failure",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+    directory = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    ).parent
+
+    assert not (
+        directory / ".deadline_evidence.lock"
+    ).exists()
+    assert not list(
+        directory.glob(
+            ".deadline_evidence.json.*.tmp"
+        )
+    )
+
+
+def test_d1b5_s1_i2_rejects_lock_path_symlink(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+    destination = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+    destination.parent.mkdir(parents=True)
+
+    target = tmp_path / "foreign-lock"
+    target.write_text("foreign", encoding="utf-8")
+    lock = destination.parent / ".deadline_evidence.lock"
+
+    try:
+        lock.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink unavailable")
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="symlink",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+    assert target.read_text(encoding="utf-8") == "foreign"
+    assert lock.is_symlink()
+
+
+def test_d1b5_s1_i2_rejects_current_temporary_symlink(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    fixed_random = b"\x01" * 16
+    monkeypatch.setattr(
+        snapshots.os,
+        "urandom",
+        lambda _count: fixed_random,
+    )
+
+    paths = snapshots._d1b5_deadline_evidence_paths(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+    paths["directory"].mkdir(parents=True)
+
+    target = tmp_path / "foreign-temporary"
+    target.write_text("foreign", encoding="utf-8")
+
+    try:
+        paths["temporary"].symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink unavailable")
+
+    with pytest.raises(
+        snapshots.PreNightContractError,
+        match="symlink",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+    assert target.read_text(encoding="utf-8") == "foreign"
+    assert paths["temporary"].is_symlink()
+
+
+def test_d1b5_s1_i2_lock_close_failure_is_fail_closed(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    real_close = snapshots.os.close
+    calls = {"count": 0}
+
+    def fail_first_close(descriptor):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OSError("injected lock close failure")
+        return real_close(descriptor)
+
+    monkeypatch.setattr(
+        snapshots.os,
+        "close",
+        fail_first_close,
+    )
+
+    with pytest.raises(
+        snapshots.PreNightIntegrityError,
+        match="lock descriptor close failed",
+    ):
+        snapshots.publish_pre_night_deadline_evidence(
+            tmp_path,
+            deadline_evidence=payload,
+        )
+
+    directory = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    ).parent
+
+    assert calls["count"] >= 2
+    assert not (
+        directory / ".deadline_evidence.lock"
+    ).exists()
+
+
+def test_d1b5_s1_i2_atomic_conflict_does_not_overwrite(
+    tmp_path,
+    monkeypatch,
+):
+    payload, canonical = _d1b5_publication_contract(
+        monkeypatch
+    )
+    destination = _d1b5_destination(
+        tmp_path,
+        "2026-07-30",
+        "01",
+    )
+
+    def competing_link(source, target):
+        target.write_bytes(source.read_bytes())
+        raise FileExistsError(
+            "injected competing publication"
+        )
+
+    monkeypatch.setattr(
+        snapshots.os,
+        "link",
+        competing_link,
+    )
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    assert destination.read_bytes() == canonical
+    assert result["cached"] is True
+    assert (
+        result["publication_status"]
+        == "VALIDATED_REUSE"
+    )
+
+
+def test_d1b5_s1_i2_durability_order_after_publication(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+    events = []
+
+    real_link = snapshots.os.link
+    real_fsync_file = snapshots.fsync_file
+    real_directory_fsync = (
+        snapshots._d1b5_fsync_directory
+    )
+
+    def tracked_link(source, destination):
+        events.append("link")
+        return real_link(source, destination)
+
+    def tracked_file_fsync(path):
+        events.append("destination_fsync")
+        return real_fsync_file(path)
+
+    def tracked_directory_fsync(path):
+        events.append("directory_fsync")
+        return real_directory_fsync(path)
+
+    monkeypatch.setattr(
+        snapshots.os,
+        "link",
+        tracked_link,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "fsync_file",
+        tracked_file_fsync,
+    )
+    monkeypatch.setattr(
+        snapshots,
+        "_d1b5_fsync_directory",
+        tracked_directory_fsync,
+    )
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    assert result["publication_status"] == "CREATED"
+    assert events == [
+        "link",
+        "destination_fsync",
+        "directory_fsync",
+    ]
+
+
+def test_d1b5_s1_i2_success_removes_owned_unique_temp(
+    tmp_path,
+    monkeypatch,
+):
+    payload, _ = _d1b5_publication_contract(monkeypatch)
+
+    result = snapshots.publish_pre_night_deadline_evidence(
+        tmp_path,
+        deadline_evidence=payload,
+    )
+
+    directory = result["paths"]["directory"]
+
+    assert not list(
+        directory.glob(
+            ".deadline_evidence.json.*.tmp"
+        )
+    )
+    assert not (
+        directory / ".deadline_evidence.lock"
+    ).exists()
+
+
+# D1B5-S1-I2-FOCUSED-TESTS-END
+
+
+# D1B5-STAGE1-PUBLICATION-TESTS-END
