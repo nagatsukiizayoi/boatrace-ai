@@ -9,6 +9,8 @@ description = "BOAT RACE prediction and paper trading system"
 requires-python = ">=3.12"
 dynamic = ["dependencies"]
 
+[project.scripts]
+boatrace-pre-night = "boatrace_ai.cli.pre_night:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
