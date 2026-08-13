@@ -482,3 +482,19 @@ def test_s2_does_not_create_later_stage_artifacts(
     assert "execution_manifest.json" not in names
     assert "prospective_manifest.json" not in names
     assert "snapshot.parquet" not in names
+
+
+def test_s2_rejects_duplicate_expected_venue_codes(
+    tmp_path,
+    monkeypatch,
+):
+    _install_contract(monkeypatch)
+
+    with pytest.raises(
+        collection.PreNightDeadlineCollectionContractError,
+        match="contains duplicate",
+    ):
+        _collect(
+            tmp_path,
+            venues=("01", "01"),
+        )
