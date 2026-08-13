@@ -431,3 +431,19 @@ def test_s3_uses_link_and_not_replace():
 
     assert "link" in calls
     assert "replace" not in calls
+
+
+def test_s3_rejects_program_entry_venue_not_in_deadline_collection(
+    tmp_path,
+):
+    entries = _program_entries()
+    entries[0] = {
+        **entries[0],
+        "venue_code": "03",
+    }
+
+    with pytest.raises(
+        binding.PreNightProgramBindingContractError,
+        match="program entry venue is not in deadline collection",
+    ):
+        _publish(tmp_path, entries=entries)
