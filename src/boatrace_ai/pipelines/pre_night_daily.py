@@ -30,6 +30,7 @@ from boatrace_ai.ingestion.pre_night_snapshots import (
     build_snapshot_paths,
     collect_pre_night_program_snapshot,
     normalize_race_date,
+    publish_pre_night_deadline_evidence,
 )
 from boatrace_ai.pipelines.pre_night_snapshot_etl import (
     build_output_paths,
@@ -795,6 +796,83 @@ def run_pre_night_daily(
             error_prefix="Requested",
         )
     )
+
+    evidence_race_date = validated_deadline_evidence.get(
+        "race_date"
+    )
+
+    if evidence_race_date != date_value.isoformat():
+        raise PreNightDailyContractError(
+            "Requested deadline_evidence race_date mismatch: "
+            f"expected={date_value.isoformat()}, "
+            f"actual={evidence_race_date!r}"
+        )
+
+    # The immutable Deadline Evidence artifact must be published
+    # and validated before collector or downstream pipeline work.
+    deadline_publication = (
+        publish_pre_night_deadline_evidence(
+            root,
+            deadline_evidence=validated_deadline_evidence,
+        )
+    )
+
+    publication_digest = deadline_publication.get(
+        "deadline_evidence_sha256"
+    )
+
+    if publication_digest != requested_deadline_sha256:
+        raise PreNightDailyIntegrityError(
+            "Published deadline evidence digest mismatch"
+        )
+
+    publication_status = deadline_publication.get(
+        "publication_status"
+    )
+
+    if publication_status not in {
+        "CREATED",
+        "VALIDATED_REUSE",
+    }:
+        raise PreNightDailyIntegrityError(
+            "Published deadline evidence status is invalid: "
+            f"{publication_status!r}"
+        )
+
+    publication_paths = deadline_publication.get(
+        "paths"
+    )
+
+    if not isinstance(publication_paths, dict):
+        raise PreNightDailyIntegrityError(
+            "Published deadline evidence paths are unavailable"
+        )
+
+    deadline_evidence_path_value = (
+        publication_paths.get("deadline_evidence")
+    )
+
+    if deadline_evidence_path_value is None:
+        raise PreNightDailyIntegrityError(
+            "Published deadline evidence path is missing"
+        )
+
+    deadline_evidence_path = Path(
+        deadline_evidence_path_value
+    )
+
+    published_artifact = _artifact_record(
+        deadline_evidence_path,
+        root,
+    )
+
+    if (
+        published_artifact["sha256"]
+        != requested_deadline_sha256
+    ):
+        raise PreNightDailyIntegrityError(
+            "Final deadline evidence artifact digest mismatch"
+        )
 
     collector_function = (
         collector
