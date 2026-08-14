@@ -131,3 +131,22 @@ Schema documentation:
 - [Payout Schema v1 Draft](docs/payout_schema_v1_draft.md)
 
 The full-month validation artifacts are stored separately from production data under the Google Drive validation area. Production regeneration and GitHub registration are performed only after final review.
+
+<!-- D1B5-STAGE1-R2-DEADLINE-EVIDENCE-BEGIN -->
+## Stage 1 Deadline Evidence publication
+
+Contract: `D1B5-STAGE1-DEADLINE-EVIDENCE-PUBLICATION-V2-R2-APPROVED`
+
+A live PRE_NIGHT daily run publishes validated Deadline Evidence
+before collector or downstream pipeline execution.
+
+The artifact is canonical UTF-8 JSON with exactly one trailing LF.
+SHA-256 is calculated over those exact canonical bytes.
+
+Publication is immutable:
+
+- identical existing content becomes `VALIDATED_REUSE`;
+- conflicting or non-canonical content fails closed;
+- incomplete temporary files are not completed artifacts;
+- the execution manifest records the canonical Deadline Evidence SHA-256 binding without changing its existing `artifacts` shape.
+<!-- D1B5-STAGE1-R2-DEADLINE-EVIDENCE-END -->

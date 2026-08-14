@@ -15,6 +15,10 @@ from boatrace_ai.ingestion.daily_archives import (
     build_archive_spec,
     validate_lzh_file,
 )
+from boatrace_ai.ingestion.pre_night_deadlines import (
+    canonical_deadline_evidence_bytes,
+    validate_deadline_evidence,
+)
 
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -549,12 +553,727 @@ def validate_cached_snapshot(
     }
 
 
+
+def _build_deadline_evidence_metadata(
+    deadline_evidence,
+) -> dict:
+    """Validate and deterministically bind optional D1-A evidence."""
+    if deadline_evidence is None:
+        return {}
+
+    validated_evidence = validate_deadline_evidence(
+        deadline_evidence
+    )
+    canonical_bytes = canonical_deadline_evidence_bytes(
+        validated_evidence
+    )
+
+    return {
+        "deadline_evidence": validated_evidence,
+        "deadline_evidence_sha256": hashlib.sha256(
+            canonical_bytes
+        ).hexdigest(),
+    }
+
+
+def _require_cached_deadline_binding(
+    outcome: dict,
+    deadline_metadata: dict,
+) -> dict:
+    """Require a cached Snapshot v2 to match requested evidence."""
+    if not deadline_metadata:
+        return outcome
+
+    metadata = outcome.get("metadata")
+
+    if not isinstance(metadata, dict):
+        raise PreNightIntegrityError(
+            "cached snapshot metadata is unavailable"
+        )
+
+    for field_name in (
+        "deadline_evidence",
+        "deadline_evidence_sha256",
+    ):
+        if metadata.get(field_name) != deadline_metadata[field_name]:
+            raise PreNightIntegrityError(
+                "cached snapshot deadline evidence mismatch: "
+                f"{field_name}"
+            )
+
+    return outcome
+
+
+
+# D1B5-STAGE1-PUBLICATION-BEGIN
+
+_D1B5_DEADLINE_EVIDENCE_FORBIDDEN_KEYS = frozenset(
+    {
+        "raw_html",
+        "html_bytes",
+        "raw_source_bytes",
+        "source_bytes",
+        "response_body",
+        "page_source",
+        "raw_page",
+        "raw_document",
+    }
+)
+
+
+def _d1b5_find_forbidden_deadline_payload_keys(
+    value,
+    path="$",
+) -> list[str]:
+    findings = []
+
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+
+            if (
+                isinstance(key, str)
+                and key.lower()
+                in _D1B5_DEADLINE_EVIDENCE_FORBIDDEN_KEYS
+            ):
+                findings.append(child_path)
+
+            findings.extend(
+                _d1b5_find_forbidden_deadline_payload_keys(
+                    child,
+                    child_path,
+                )
+            )
+
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            findings.extend(
+                _d1b5_find_forbidden_deadline_payload_keys(
+                    child,
+                    f"{path}[{index}]",
+                )
+            )
+
+    return findings
+
+
+def _d1b5_require_publication_identity(
+    validated_evidence,
+) -> tuple[str, str]:
+    race_date = validated_evidence.get("race_date")
+    venue_code = validated_evidence.get("venue_code")
+
+    if not isinstance(race_date, str):
+        raise PreNightContractError(
+            "deadline evidence race_date must be string"
+        )
+
+    try:
+        normalized_race_date = (
+            dt.date.fromisoformat(race_date).isoformat()
+        )
+    except (TypeError, ValueError) as error:
+        raise PreNightContractError(
+            "deadline evidence race_date is invalid"
+        ) from error
+
+    if normalized_race_date != race_date:
+        raise PreNightContractError(
+            "deadline evidence race_date must be canonical ISO date"
+        )
+
+    if (
+        not isinstance(venue_code, str)
+        or len(venue_code) != 2
+        or not venue_code.isascii()
+        or not venue_code.isdigit()
+        or not 1 <= int(venue_code) <= 24
+    ):
+        raise PreNightContractError(
+            "deadline evidence venue_code must be 01 through 24"
+        )
+
+    return race_date, venue_code
+
+
+def _d1b5_deadline_evidence_paths(
+    data_root,
+    race_date: str,
+    venue_code: str,
+) -> dict[str, Path]:
+    root = Path(data_root)
+    date_value = dt.date.fromisoformat(race_date)
+
+    directory = (
+        root
+        / "prospective"
+        / "pre_night"
+        / "deadline_evidence"
+        / f"{date_value.year:04d}"
+        / f"{date_value.month:02d}"
+        / f"{date_value.day:02d}"
+        / venue_code
+    )
+
+    destination = directory / "deadline_evidence.json"
+    temporary_uid = os.urandom(16).hex()
+
+    return {
+        "root": root,
+        "directory": directory,
+        "deadline_evidence": destination,
+        "lock": directory / ".deadline_evidence.lock",
+        "temporary": (
+            directory
+            / (
+                ".deadline_evidence.json."
+                f"{temporary_uid}.tmp"
+            )
+        ),
+    }
+
+
+def _d1b5_assert_safe_publication_path(
+    paths: dict[str, Path],
+) -> None:
+    root = paths["root"]
+    directory = paths["directory"]
+    destination = paths["deadline_evidence"]
+    lock_path = paths["lock"]
+    temporary = paths["temporary"]
+
+    if root.exists() and root.is_symlink():
+        raise PreNightContractError(
+            "deadline evidence data_root must not be symlink"
+        )
+
+    for name, target in (
+        ("directory", directory),
+        ("destination", destination),
+        ("lock", lock_path),
+        ("temporary", temporary),
+    ):
+        try:
+            target.relative_to(root)
+        except ValueError as error:
+            raise PreNightContractError(
+                "deadline evidence "
+                f"{name} path escapes data_root"
+            ) from error
+
+    if destination.parent != directory:
+        raise PreNightContractError(
+            "deadline evidence destination parent mismatch"
+        )
+
+    if lock_path.parent != directory:
+        raise PreNightContractError(
+            "deadline evidence lock parent mismatch"
+        )
+
+    if temporary.parent != directory:
+        raise PreNightContractError(
+            "deadline evidence temporary parent mismatch"
+        )
+
+    root_resolved = root.resolve(strict=False)
+
+    for name, target in (
+        ("directory", directory),
+        ("destination", destination),
+        ("lock", lock_path),
+        ("temporary", temporary),
+    ):
+        target_resolved = target.resolve(strict=False)
+
+        try:
+            target_resolved.relative_to(root_resolved)
+        except ValueError as error:
+            raise PreNightContractError(
+                "deadline evidence resolved "
+                f"{name} path escapes data_root"
+            ) from error
+
+        current = root
+        relative_parts = target.relative_to(root).parts
+
+        for component in relative_parts:
+            current = current / component
+
+            if current.exists() and current.is_symlink():
+                raise PreNightContractError(
+                    "deadline evidence path contains symlink: "
+                    f"{current}"
+                )
+
+    if destination.exists() and not destination.is_file():
+        raise PreNightIntegrityError(
+            "deadline evidence target must be regular file"
+        )
+
+    if lock_path.exists() and lock_path.is_symlink():
+        raise PreNightContractError(
+            "deadline evidence lock path must not be symlink"
+        )
+
+    if temporary.exists() and temporary.is_symlink():
+        raise PreNightContractError(
+            "deadline evidence temporary path "
+            "must not be symlink"
+        )
+
+
+def _d1b5_fsync_directory(directory: Path) -> None:
+    descriptor = None
+    close_error = None
+
+    flags = os.O_RDONLY
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    flags |= directory_flag
+
+    try:
+        descriptor = os.open(directory, flags)
+        os.fsync(descriptor)
+    except OSError as error:
+        raise PreNightIntegrityError(
+            "deadline evidence parent-directory fsync failed"
+        ) from error
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                close_error = error
+
+        if close_error is not None:
+            raise PreNightIntegrityError(
+                "deadline evidence parent-directory "
+                "descriptor close failed"
+            ) from close_error
+
+
+def _d1b5_publication_receipt(
+    *,
+    paths: dict[str, Path],
+    race_date: str,
+    venue_code: str,
+    digest: str,
+    byte_length: int,
+    cached: bool,
+) -> dict:
+    relative_path = (
+        paths["deadline_evidence"]
+        .relative_to(paths["root"])
+        .as_posix()
+    )
+
+    return {
+        "race_date": race_date,
+        "venue_code": venue_code,
+        "paths": {
+            "directory": paths["directory"],
+            "deadline_evidence": (
+                paths["deadline_evidence"]
+            ),
+        },
+        "relative_path": relative_path,
+        "deadline_evidence_sha256": digest,
+        "byte_length": byte_length,
+        "cached": cached,
+        "publication_status": (
+            "VALIDATED_REUSE"
+            if cached
+            else "CREATED"
+        ),
+    }
+
+
+def _validate_cached_deadline_evidence_artifact(
+    *,
+    paths: dict[str, Path],
+    expected_race_date: str,
+    expected_venue_code: str,
+    expected_bytes: bytes,
+    expected_sha256: str,
+) -> dict:
+    destination = paths["deadline_evidence"]
+
+    _d1b5_assert_safe_publication_path(paths)
+
+    if not destination.exists():
+        raise PreNightCacheError(
+            "deadline evidence cache does not exist"
+        )
+
+    if destination.is_symlink() or not destination.is_file():
+        raise PreNightCacheError(
+            "deadline evidence cache must be regular file"
+        )
+
+    stored_bytes = destination.read_bytes()
+
+    try:
+        stored_text = stored_bytes.decode("utf-8")
+        stored_payload = json.loads(stored_text)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PreNightCacheError(
+            "deadline evidence cache is not valid UTF-8 JSON"
+        ) from error
+
+    if not isinstance(stored_payload, dict):
+        raise PreNightCacheError(
+            "deadline evidence cache must be JSON object"
+        )
+
+    forbidden = (
+        _d1b5_find_forbidden_deadline_payload_keys(
+            stored_payload
+        )
+    )
+
+    if forbidden:
+        raise PreNightCacheError(
+            "deadline evidence cache contains forbidden raw payload"
+        )
+
+    try:
+        validated = validate_deadline_evidence(
+            stored_payload
+        )
+        stored_canonical = (
+            canonical_deadline_evidence_bytes(
+                validated
+            )
+        )
+    except Exception as error:
+        raise PreNightCacheError(
+            "deadline evidence cache validation failed"
+        ) from error
+
+    race_date, venue_code = (
+        _d1b5_require_publication_identity(validated)
+    )
+
+    if race_date != expected_race_date:
+        raise PreNightCacheError(
+            "deadline evidence cache race_date mismatch"
+        )
+
+    if venue_code != expected_venue_code:
+        raise PreNightCacheError(
+            "deadline evidence cache venue_code mismatch"
+        )
+
+    if stored_canonical != stored_bytes:
+        raise PreNightCacheError(
+            "deadline evidence cache is non-canonical"
+        )
+
+    stored_digest = hashlib.sha256(
+        stored_bytes
+    ).hexdigest()
+
+    if stored_digest != expected_sha256:
+        raise PreNightCacheError(
+            "deadline evidence cache SHA-256 conflict"
+        )
+
+    if stored_bytes != expected_bytes:
+        raise PreNightCacheError(
+            "deadline evidence cache byte conflict"
+        )
+
+    return _d1b5_publication_receipt(
+        paths=paths,
+        race_date=race_date,
+        venue_code=venue_code,
+        digest=stored_digest,
+        byte_length=len(stored_bytes),
+        cached=True,
+    )
+
+
+def publish_pre_night_deadline_evidence(
+    data_root,
+    *,
+    deadline_evidence,
+) -> dict:
+    """Publish one canonical deadline-evidence artifact per date/venue."""
+
+    if deadline_evidence is None:
+        raise PreNightContractError(
+            "deadline_evidence is required"
+        )
+
+    validated = validate_deadline_evidence(
+        deadline_evidence
+    )
+
+    forbidden = (
+        _d1b5_find_forbidden_deadline_payload_keys(
+            validated
+        )
+    )
+
+    if forbidden:
+        raise PreNightContractError(
+            "deadline evidence contains forbidden raw payload"
+        )
+
+    race_date, venue_code = (
+        _d1b5_require_publication_identity(validated)
+    )
+
+    canonical_bytes = (
+        canonical_deadline_evidence_bytes(validated)
+    )
+    digest = hashlib.sha256(
+        canonical_bytes
+    ).hexdigest()
+
+    paths = _d1b5_deadline_evidence_paths(
+        data_root,
+        race_date,
+        venue_code,
+    )
+
+    _d1b5_assert_safe_publication_path(paths)
+
+    destination = paths["deadline_evidence"]
+
+    if destination.exists():
+        return _validate_cached_deadline_evidence_artifact(
+            paths=paths,
+            expected_race_date=race_date,
+            expected_venue_code=venue_code,
+            expected_bytes=canonical_bytes,
+            expected_sha256=digest,
+        )
+
+    directory = paths["directory"]
+    directory.mkdir(parents=True, exist_ok=True)
+
+    _d1b5_assert_safe_publication_path(paths)
+
+    lock_path = paths["lock"]
+    temporary = paths["temporary"]
+
+    lock_fd = None
+    lock_acquired = False
+    lock_identity = None
+    temporary_created = False
+
+    try:
+        _d1b5_assert_safe_publication_path(paths)
+
+        try:
+            lock_fd = os.open(
+                lock_path,
+                os.O_CREAT
+                | os.O_EXCL
+                | os.O_WRONLY,
+            )
+
+            # Ownership is recorded immediately after os.open
+            # succeeds and before descriptor close is attempted.
+            lock_acquired = True
+            lock_stat = os.fstat(lock_fd)
+            lock_identity = (
+                lock_stat.st_dev,
+                lock_stat.st_ino,
+            )
+
+        except FileExistsError as error:
+            raise PreNightSnapshotError(
+                "deadline evidence publication lock exists: "
+                f"{lock_path}"
+            ) from error
+        except OSError as error:
+            raise PreNightSnapshotError(
+                "deadline evidence publication lock "
+                "could not be acquired"
+            ) from error
+
+        try:
+            os.close(lock_fd)
+        except OSError as error:
+            raise PreNightIntegrityError(
+                "deadline evidence lock descriptor "
+                "close failed"
+            ) from error
+        else:
+            lock_fd = None
+
+        _d1b5_assert_safe_publication_path(paths)
+
+        if destination.exists():
+            return (
+                _validate_cached_deadline_evidence_artifact(
+                    paths=paths,
+                    expected_race_date=race_date,
+                    expected_venue_code=venue_code,
+                    expected_bytes=canonical_bytes,
+                    expected_sha256=digest,
+                )
+            )
+
+        try:
+            with temporary.open("xb") as handle:
+                temporary_created = True
+                handle.write(canonical_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError as error:
+            raise PreNightCacheError(
+                "deadline evidence current temporary "
+                "path already exists"
+            ) from error
+        except Exception as error:
+            raise PreNightIntegrityError(
+                "deadline evidence temporary write failed"
+            ) from error
+
+        _d1b5_assert_safe_publication_path(paths)
+
+        temporary_bytes = temporary.read_bytes()
+
+        if temporary_bytes != canonical_bytes:
+            raise PreNightIntegrityError(
+                "deadline evidence temporary byte mismatch"
+            )
+
+        temporary_digest = hashlib.sha256(
+            temporary_bytes
+        ).hexdigest()
+
+        if temporary_digest != digest:
+            raise PreNightIntegrityError(
+                "deadline evidence temporary SHA-256 mismatch"
+            )
+
+        # Recheck immediately before no-overwrite publication.
+        _d1b5_assert_safe_publication_path(paths)
+
+        if destination.exists():
+            return (
+                _validate_cached_deadline_evidence_artifact(
+                    paths=paths,
+                    expected_race_date=race_date,
+                    expected_venue_code=venue_code,
+                    expected_bytes=canonical_bytes,
+                    expected_sha256=digest,
+                )
+            )
+
+        try:
+            # os.link is the accepted atomic no-overwrite
+            # publication primitive for I2P2-M01=A.
+            os.link(temporary, destination)
+        except FileExistsError:
+            return (
+                _validate_cached_deadline_evidence_artifact(
+                    paths=paths,
+                    expected_race_date=race_date,
+                    expected_venue_code=venue_code,
+                    expected_bytes=canonical_bytes,
+                    expected_sha256=digest,
+                )
+            )
+        except OSError as error:
+            raise PreNightIntegrityError(
+                "deadline evidence atomic publication failed"
+            ) from error
+
+        try:
+            fsync_file(destination)
+        except OSError as error:
+            raise PreNightIntegrityError(
+                "deadline evidence destination fsync failed"
+            ) from error
+
+        _d1b5_fsync_directory(directory)
+
+        verified = (
+            _validate_cached_deadline_evidence_artifact(
+                paths=paths,
+                expected_race_date=race_date,
+                expected_venue_code=venue_code,
+                expected_bytes=canonical_bytes,
+                expected_sha256=digest,
+            )
+        )
+
+        return {
+            **verified,
+            "cached": False,
+            "publication_status": "CREATED",
+        }
+
+    finally:
+        cleanup_error = None
+
+        if temporary_created:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as error:
+                cleanup_error = error
+
+        if lock_fd is not None:
+            try:
+                os.close(lock_fd)
+            except OSError as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+            else:
+                lock_fd = None
+
+        if lock_acquired:
+            try:
+                current_stat = lock_path.lstat()
+            except FileNotFoundError:
+                current_stat = None
+            except OSError as error:
+                current_stat = None
+                if cleanup_error is None:
+                    cleanup_error = error
+
+            if current_stat is not None:
+                current_identity = (
+                    current_stat.st_dev,
+                    current_stat.st_ino,
+                )
+
+                if current_identity != lock_identity:
+                    if cleanup_error is None:
+                        cleanup_error = RuntimeError(
+                            "deadline evidence lock ownership "
+                            "identity changed"
+                        )
+                else:
+                    try:
+                        lock_path.unlink()
+                    except OSError as error:
+                        if cleanup_error is None:
+                            cleanup_error = error
+
+        if cleanup_error is not None:
+            raise PreNightIntegrityError(
+                "deadline evidence owned-resource "
+                "cleanup failed"
+            ) from cleanup_error
+
+
+# D1B5-STAGE1-PUBLICATION-END
+
+
 def collect_pre_night_program_snapshot(
     race_date,
     data_root,
     timeout=60,
     session=None,
     now_fn=None,
+    *,
+    deadline_evidence=None,
 ) -> dict:
     date_value = normalize_race_date(race_date)
     paths = build_snapshot_paths(
@@ -565,13 +1284,23 @@ def collect_pre_night_program_snapshot(
     archive_path = paths["archive"]
     metadata_path = paths["metadata"]
 
+    deadline_metadata = (
+        _build_deadline_evidence_metadata(
+            deadline_evidence
+        )
+    )
+
     archive_exists = archive_path.exists()
     metadata_exists = metadata_path.exists()
 
     if archive_exists or metadata_exists:
-        return validate_cached_snapshot(
+        outcome = validate_cached_snapshot(
             date_value,
             data_root,
+        )
+        return _require_cached_deadline_binding(
+            outcome,
+            deadline_metadata,
         )
 
     directory = paths["directory"]
@@ -627,9 +1356,13 @@ def collect_pre_night_program_snapshot(
 
     try:
         if archive_path.exists() or metadata_path.exists():
-            return validate_cached_snapshot(
+            outcome = validate_cached_snapshot(
                 date_value,
                 data_root,
+            )
+            return _require_cached_deadline_binding(
+                outcome,
+                deadline_metadata,
             )
 
         spec = build_archive_spec(
@@ -785,6 +1518,7 @@ def collect_pre_night_program_snapshot(
                 in response_headers.items()
             },
         }
+        metadata.update(deadline_metadata)
 
         with temporary_metadata.open(
             "x",
@@ -816,6 +1550,10 @@ def collect_pre_night_program_snapshot(
         outcome = validate_cached_snapshot(
             date_value,
             data_root,
+        )
+        outcome = _require_cached_deadline_binding(
+            outcome,
+            deadline_metadata,
         )
 
         outcome["cached"] = False

@@ -8,6 +8,9 @@ import pandas as pd
 import pytest
 
 from boatrace_ai.ingestion import (
+    pre_night_deadlines as deadlines,
+)
+from boatrace_ai.ingestion import (
     pre_night_snapshots as snapshots,
 )
 from boatrace_ai.pipelines import (
@@ -66,6 +69,80 @@ def build_snapshot(
         archive_bytes
     )
 
+    deadline_raw = (
+        b"<html><body>"
+        b"test deadline schedule"
+        b"</body></html>"
+    )
+    deadline_fetched_at = dt.datetime(
+        2026,
+        8,
+        9,
+        12,
+        0,
+        tzinfo=UTC,
+    )
+    deadline_base = dt.datetime(
+        2026,
+        8,
+        10,
+        10,
+        0,
+        tzinfo=JST,
+    )
+    deadline_evidence = (
+        deadlines.build_deadline_evidence(
+            raw_source_bytes=deadline_raw,
+            source_locator=(
+                "https://example.invalid/"
+                "deadline-schedule"
+            ),
+            source_name=(
+                "BOAT RACE official test page"
+            ),
+            source_authority="BOAT RACE",
+            request_started_at=(
+                deadline_fetched_at
+                - dt.timedelta(seconds=2)
+            ),
+            fetched_at=deadline_fetched_at,
+            http_status=200,
+            response_headers={
+                "Content-Type": (
+                    "text/html; charset=UTF-8"
+                ),
+            },
+            race_date="2026-08-10",
+            venue_code="01",
+            source_timezone=(
+                "explicit-source-timezone-evidence"
+            ),
+            race_deadlines=[
+                {
+                    "race_no": race_no,
+                    "deadline_kind": (
+                        deadlines.DEADLINE_KIND
+                    ),
+                    "scheduled_deadline_at": (
+                        deadline_base
+                        + dt.timedelta(
+                            minutes=race_no
+                        )
+                    ),
+                }
+                for race_no in range(1, 13)
+            ],
+        )
+    )
+    deadline_evidence_sha256 = (
+        sha256_bytes(
+            deadlines
+            .canonical_deadline_evidence_bytes(
+                deadline_evidence
+            )
+        )
+    )
+
     metadata = {
         "contract_version": (
             snapshots.CONTRACT_VERSION
@@ -110,6 +187,12 @@ def build_snapshot(
             "FETCHED_BY_AS_OF"
             if eligible
             else "FETCHED_AFTER_AS_OF"
+        ),
+        "deadline_evidence": (
+            deadline_evidence
+        ),
+        "deadline_evidence_sha256": (
+            deadline_evidence_sha256
         ),
     }
 
@@ -612,3 +695,365 @@ def test_cached_pipeline_manifest_rejects_nested_pit_mismatch(
             snapshot_validator=make_validator(snapshot),
             now_fn=fixed_clock,
         )
+
+
+# BEGIN PHASE1_D1B2_TESTS
+
+
+def _d1b2_build(tmp_path, snapshot=None):
+    if snapshot is None:
+        snapshot = build_snapshot(tmp_path)
+
+    return pipeline.build_pre_night_program_parquet(
+        "2026-08-10",
+        tmp_path,
+        parser=lambda *args, **kwargs: (
+            valid_program_frame()
+        ),
+        extractor=fake_extractor,
+        snapshot_validator=make_validator(snapshot),
+        now_fn=fixed_clock,
+    )
+
+
+def test_d1b2_t01_program_entries_accept_snapshot_binding(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    result = _d1b2_build(tmp_path, snapshot)
+    frame = pd.read_parquet(result["paths"]["parquet"])
+
+    assert "deadline_evidence_sha256" in frame.columns
+
+
+def test_d1b2_t02_every_row_has_identical_digest(tmp_path):
+    snapshot = build_snapshot(tmp_path)
+    expected = snapshot["metadata"][
+        "deadline_evidence_sha256"
+    ]
+
+    result = _d1b2_build(tmp_path, snapshot)
+    frame = pd.read_parquet(result["paths"]["parquet"])
+
+    assert frame["deadline_evidence_sha256"].notna().all()
+    assert frame["deadline_evidence_sha256"].eq(
+        expected
+    ).all()
+
+
+def test_d1b2_t03_manifest_contains_validated_evidence(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    result = _d1b2_build(tmp_path, snapshot)
+
+    expected = deadlines.validate_deadline_evidence(
+        snapshot["metadata"]["deadline_evidence"]
+    )
+
+    assert result["manifest"]["deadline_evidence"] == (
+        expected
+    )
+
+
+def test_d1b2_t04_manifest_digest_is_canonical_sha256(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    result = _d1b2_build(tmp_path, snapshot)
+
+    validated = deadlines.validate_deadline_evidence(
+        snapshot["metadata"]["deadline_evidence"]
+    )
+    expected = sha256_bytes(
+        deadlines.canonical_deadline_evidence_bytes(
+            validated
+        )
+    )
+
+    assert result["manifest"][
+        "deadline_evidence_sha256"
+    ] == expected
+
+
+def test_d1b2_t05_snapshot_manifest_and_rows_match(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    result = _d1b2_build(tmp_path, snapshot)
+    frame = pd.read_parquet(result["paths"]["parquet"])
+
+    expected = snapshot["metadata"][
+        "deadline_evidence_sha256"
+    ]
+
+    assert result["manifest"][
+        "deadline_evidence_sha256"
+    ] == expected
+    assert set(
+        frame["deadline_evidence_sha256"]
+    ) == {expected}
+
+
+def test_d1b2_t06_missing_evidence_fails_before_output(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    snapshot["metadata"].pop("deadline_evidence")
+
+    output_paths = pipeline.build_output_paths(
+        "2026-08-10",
+        tmp_path,
+    )
+
+    with pytest.raises(
+        pipeline.PreNightFeatureContractError,
+        match="deadline_evidence is missing",
+    ):
+        _d1b2_build(tmp_path, snapshot)
+
+    assert not output_paths["directory"].exists()
+    assert not output_paths["parquet"].exists()
+    assert not output_paths["manifest"].exists()
+
+
+def test_d1b2_t07_missing_digest_fails_before_output(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    snapshot["metadata"].pop(
+        "deadline_evidence_sha256"
+    )
+
+    output_paths = pipeline.build_output_paths(
+        "2026-08-10",
+        tmp_path,
+    )
+
+    with pytest.raises(
+        pipeline.PreNightFeatureContractError,
+        match="deadline_evidence_sha256 is missing",
+    ):
+        _d1b2_build(tmp_path, snapshot)
+
+    assert not output_paths["directory"].exists()
+    assert not output_paths["parquet"].exists()
+    assert not output_paths["manifest"].exists()
+
+
+def test_d1b2_t08_malformed_evidence_fails_closed(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    snapshot["metadata"]["deadline_evidence"] = {
+        "invalid": True,
+    }
+
+    with pytest.raises(
+        pipeline.PreNightFeatureContractError,
+        match="validation failed",
+    ):
+        _d1b2_build(tmp_path, snapshot)
+
+
+def test_d1b2_t09_snapshot_digest_mismatch_fails_closed(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    snapshot["metadata"][
+        "deadline_evidence_sha256"
+    ] = "f" * 64
+
+    with pytest.raises(
+        pipeline.PreNightFeatureContractError,
+        match="SHA-256|sha256",
+    ):
+        _d1b2_build(tmp_path, snapshot)
+
+
+def test_d1b2_t10_cached_manifest_digest_mismatch(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    result = _d1b2_build(tmp_path, snapshot)
+
+    manifest_path = result["paths"]["manifest"]
+    manifest = json.loads(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    manifest["deadline_evidence_sha256"] = "e" * 64
+    manifest_path.write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        pipeline.PreNightOutputIntegrityError,
+        match="deadline evidence",
+    ):
+        _d1b2_build(tmp_path, snapshot)
+
+
+def test_d1b2_t11_cached_parquet_digest_mismatch(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    result = _d1b2_build(tmp_path, snapshot)
+
+    parquet_path = result["paths"]["parquet"]
+    manifest_path = result["paths"]["manifest"]
+
+    frame = pd.read_parquet(parquet_path)
+    frame["deadline_evidence_sha256"] = "d" * 64
+    frame.to_parquet(parquet_path, index=False)
+
+    manifest = json.loads(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    manifest["parquet_sha256"] = pipeline.sha256_file(
+        parquet_path
+    )
+    manifest_path.write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        pipeline.PreNightOutputIntegrityError,
+        match="Parquet deadline evidence",
+    ):
+        _d1b2_build(tmp_path, snapshot)
+
+
+def test_d1b2_t12_matching_cache_is_reused(tmp_path):
+    snapshot = build_snapshot(tmp_path)
+
+    first = _d1b2_build(tmp_path, snapshot)
+    second = pipeline.build_pre_night_program_parquet(
+        "2026-08-10",
+        tmp_path,
+        parser=lambda *args, **kwargs: pytest.fail(
+            "parser must not run"
+        ),
+        extractor=lambda *args, **kwargs: pytest.fail(
+            "extractor must not run"
+        ),
+        snapshot_validator=make_validator(snapshot),
+        now_fn=fixed_clock,
+    )
+
+    assert first["skipped"] is False
+    assert second["skipped"] is True
+    assert second["manifest"][
+        "deadline_evidence_sha256"
+    ] == snapshot["metadata"][
+        "deadline_evidence_sha256"
+    ]
+
+
+def test_d1b2_t13_no_prohibited_deadline_payloads(
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    result = _d1b2_build(tmp_path, snapshot)
+    manifest = result["manifest"]
+
+    serialized = json.dumps(
+        manifest,
+        sort_keys=True,
+    )
+
+    assert "raw_source_bytes" not in serialized
+    assert "raw_html" not in serialized
+    assert "canonical_bytes" not in serialized
+    assert "eligibility_cutoff_at" not in serialized
+    assert "safety_margin_seconds" not in serialized
+
+    frame = pd.read_parquet(result["paths"]["parquet"])
+
+    assert "deadline_evidence" not in frame.columns
+    assert "raw_source_bytes" not in frame.columns
+    assert "raw_html" not in frame.columns
+
+
+def test_d1b2_t14_validation_precedes_output_paths(
+    monkeypatch,
+    tmp_path,
+):
+    snapshot = build_snapshot(tmp_path)
+    snapshot["metadata"].pop("deadline_evidence")
+    events = []
+
+    def forbidden_paths(*args, **kwargs):
+        events.append("build_output_paths")
+        raise AssertionError(
+            "output paths must not be reached"
+        )
+
+    monkeypatch.setattr(
+        pipeline,
+        "build_output_paths",
+        forbidden_paths,
+    )
+
+    with pytest.raises(
+        pipeline.PreNightFeatureContractError,
+        match="deadline_evidence is missing",
+    ):
+        _d1b2_build(tmp_path, snapshot)
+
+    assert events == []
+
+
+def test_d1b2_t15_existing_manifest_and_return_shape(
+    tmp_path,
+):
+    result = _d1b2_build(tmp_path)
+    manifest = result["manifest"]
+
+    assert set(result) == {
+        "paths",
+        "manifest",
+        "structure",
+        "pit",
+        "skipped",
+    }
+
+    for field in (
+        "contract_version",
+        "feature_version",
+        "race_date",
+        "as_of_rule",
+        "as_of_time",
+        "feature_source_sha256",
+        "parquet_sha256",
+        "row_count",
+        "race_count",
+        "provenance_status",
+        "eligibility_status",
+        "pit_eligibility",
+        "deadline_evidence",
+        "deadline_evidence_sha256",
+    ):
+        assert field in manifest
+
+
+def test_d1b2_t16_public_api_signature_is_preserved():
+    import inspect
+
+    signature = inspect.signature(
+        pipeline.build_pre_night_program_parquet
+    )
+
+    assert list(signature.parameters) == [
+        "race_date",
+        "data_root",
+        "overwrite",
+        "parser",
+        "extractor",
+        "snapshot_validator",
+        "now_fn",
+    ]
+
+
+# END PHASE1_D1B2_TESTS

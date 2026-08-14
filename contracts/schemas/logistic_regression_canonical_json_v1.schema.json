@@ -1,0 +1,164 @@
+{
+  "$id": "urn:gpt-sol:boatrace-ai:logistic-regression-canonical-json-v1:non-authoritative-draft",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "NON_AUTHORITATIVE_DRAFT_NOT_PRODUCTION_CONTRACT",
+  "properties": {
+    "classes": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "coefficients": {
+      "description": "Length must equal feature_names length; enforced by semantic validator.",
+      "items": {
+        "description": "Must also pass semantic finiteness validation; NaN and infinity are forbidden.",
+        "type": "number"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "contract_id": {
+      "const": "LOGISTIC_REGRESSION_CANONICAL_JSON_V1"
+    },
+    "feature_names": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "integrity": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "sha256"
+        },
+        "canonicalization": {
+          "const": "RFC8785_JCS_DRAFT_PROPOSAL"
+        },
+        "digest_scope": {
+          "const": "document_without_integrity"
+        },
+        "payload_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "algorithm",
+        "canonicalization",
+        "digest_scope",
+        "payload_sha256"
+      ],
+      "type": "object"
+    },
+    "intercept": {
+      "description": "Must also pass semantic finiteness validation; NaN and infinity are forbidden.",
+      "type": "number"
+    },
+    "metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at_utc": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "implementation": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "training_provenance": {
+          "additionalProperties": false,
+          "properties": {
+            "code_commit": {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            "dataset_reference": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "feature_contract_reference": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "trained_at_utc": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "training_run_id": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "training_run_id",
+            "trained_at_utc",
+            "code_commit",
+            "dataset_reference",
+            "feature_contract_reference"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "created_at_utc",
+        "implementation",
+        "training_provenance"
+      ],
+      "type": "object"
+    },
+    "model_family": {
+      "const": "logistic_regression_v1"
+    },
+    "model_type": {
+      "const": "binary_logistic_regression"
+    },
+    "positive_class": {
+      "description": "Must equal classes[1]; enforced by semantic validator.",
+      "minLength": 1,
+      "type": "string"
+    },
+    "probability_semantics": {
+      "const": "p(classes[1]) = 1 / (1 + exp(-z))"
+    },
+    "schema_version": {
+      "const": "1.0.0-draft.1"
+    },
+    "score_semantics": {
+      "const": "z = intercept + sum(coefficients[i] * x[i])"
+    }
+  },
+  "required": [
+    "contract_id",
+    "schema_version",
+    "model_family",
+    "model_type",
+    "feature_names",
+    "coefficients",
+    "intercept",
+    "classes",
+    "positive_class",
+    "score_semantics",
+    "probability_semantics",
+    "metadata",
+    "integrity"
+  ],
+  "title": "LOGISTIC_REGRESSION_CANONICAL_JSON_V1 Non-Authoritative Draft",
+  "type": "object",
+  "x-p47j-cross-field-validation-required": [
+    "len(coefficients) == len(feature_names)",
+    "positive_class == classes[1]",
+    "all numeric values are finite and not booleans",
+    "integrity payload hash matches the approved canonicalization and digest scope"
+  ],
+  "x-p47j-disposition": "NON_AUTHORITATIVE_DRAFT_NOT_PRODUCTION_CONTRACT"
+}

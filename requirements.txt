@@ -1,5 +1,6 @@
 requests>=2.31,<3
 beautifulsoup4>=4.12,<5
-pandas>=2.2,<3
-pyarrow>=15,<24
+pandas==2.2.2
+pyarrow==18.1.0
 lxml>=5,<7
+jsonschema>=4.23,<5

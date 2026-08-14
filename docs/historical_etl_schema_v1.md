@@ -360,3 +360,41 @@
 - `curated/payouts/YYYY/MM/DD/race_payouts.parquet`
 
 払戻データは別成果物として追加し、既存3つのParquetの意味を変更しない。
+
+<!-- D1B5-STAGE1-R2-DEADLINE-EVIDENCE-BEGIN -->
+## Stage 1 Deadline Evidence publication contract
+
+Contract ID: `D1B5-STAGE1-DEADLINE-EVIDENCE-PUBLICATION-V2-R2-APPROVED`
+
+### M06 — atomic publication
+
+Complete canonical bytes are written to a unique temporary file on
+the same filesystem. The temporary file is flushed and synchronized
+before atomic no-overwrite publication. Incomplete temporary files are
+not treated as published evidence.
+
+### M08 — immutable validated reuse
+
+An existing artifact is decoded, schema-validated and canonicalized.
+Only byte-identical content with the expected SHA-256 is accepted as
+`VALIDATED_REUSE`. Conflicting content fails closed and is not
+overwritten.
+
+### M09 — canonical JSON
+
+Deadline Evidence uses UTF-8, stable key ordering, compact separators,
+approved value representations and exactly one trailing LF. Equivalent
+logical input therefore produces identical bytes.
+
+### M10 — digest and downstream publication gate
+
+SHA-256 is calculated over the exact canonical bytes. The final
+published file is hashed before collector and pipeline execution. The
+execution manifest records the canonical digest in
+`deadline_evidence_sha256` without changing its existing `artifacts`
+shape.
+
+Cached execution validation revalidates the digest binding across the
+source metadata, pipeline manifest and execution manifest. A missing or
+mismatched binding fails closed before cached results are accepted.
+<!-- D1B5-STAGE1-R2-DEADLINE-EVIDENCE-END -->

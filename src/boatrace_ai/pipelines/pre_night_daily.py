@@ -21,11 +21,16 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from boatrace_ai.ingestion.pre_night_deadlines import (
+    canonical_deadline_evidence_bytes,
+    validate_deadline_evidence,
+)
 from boatrace_ai.ingestion.pre_night_snapshots import (
     build_pre_night_as_of,
     build_snapshot_paths,
     collect_pre_night_program_snapshot,
     normalize_race_date,
+    publish_pre_night_deadline_evidence,
 )
 from boatrace_ai.pipelines.pre_night_snapshot_etl import (
     build_output_paths,
@@ -42,7 +47,7 @@ from boatrace_ai.pipelines.pre_night_prospective import (
 
 
 ORCHESTRATOR_VERSION = "pre_night_daily_orchestrator_v1"
-EXECUTION_CONTRACT_VERSION = "pre_night_daily_execution_v1"
+EXECUTION_CONTRACT_VERSION = "pre_night_daily_execution_v2"
 EXECUTION_MODE = "PRE_NIGHT_PROGRAM_ONLY"
 MANIFEST_STATUS_SUCCESS = "SUCCESS"
 MANIFEST_STATUS_DRY_RUN = "DRY_RUN"
@@ -205,6 +210,177 @@ def _artifact_record(
         "path": str(resolved),
         "size": int(resolved.stat().st_size),
         "sha256": sha256_file(resolved),
+    }
+
+
+def _canonical_deadline_binding(
+    evidence,
+    *,
+    error_class,
+    error_prefix,
+):
+    """Validate D1-A evidence and return normalized evidence and digest."""
+    if evidence is None:
+        raise error_class(
+            f"{error_prefix} deadline_evidence is missing"
+        )
+
+    try:
+        validated = validate_deadline_evidence(evidence)
+        canonical = canonical_deadline_evidence_bytes(validated)
+    except Exception as exc:
+        raise error_class(
+            f"{error_prefix} deadline_evidence is invalid"
+        ) from exc
+
+    return (
+        validated,
+        hashlib.sha256(canonical).hexdigest(),
+    )
+
+
+def _validate_deadline_binding_payload(
+    payload,
+    *,
+    error_prefix,
+):
+    """Validate evidence and its supplied canonical digest."""
+    if not isinstance(payload, dict):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} must be a JSON object"
+        )
+
+    if "deadline_evidence" not in payload:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} deadline_evidence is missing"
+        )
+
+    if "deadline_evidence_sha256" not in payload:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} deadline_evidence_sha256 is missing"
+        )
+
+    validated, computed = _canonical_deadline_binding(
+        payload["deadline_evidence"],
+        error_class=PreNightDailyIntegrityError,
+        error_prefix=error_prefix,
+    )
+
+    recorded = payload["deadline_evidence_sha256"]
+    if not isinstance(recorded, str) or recorded != computed:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} deadline_evidence_sha256 mismatch"
+        )
+
+    return validated, computed
+
+
+def _load_json_artifact(
+    path,
+    *,
+    data_root,
+    error_prefix,
+):
+    resolved = _path_within_root(
+        Path(path),
+        Path(data_root),
+    )
+
+    if not resolved.is_file():
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} does not exist: {resolved}"
+        )
+
+    try:
+        payload = json.loads(
+            resolved.read_text(encoding="utf-8")
+        )
+    except Exception as exc:
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} is malformed: {resolved}"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise PreNightDailyIntegrityError(
+            f"{error_prefix} must be a JSON object"
+        )
+
+    return payload
+
+
+def _validate_daily_deadline_chain(
+    source_metadata_path,
+    pipeline_manifest_path,
+    *,
+    data_root,
+    execution_manifest=None,
+    requested_evidence=None,
+):
+    """Validate caller/source/pipeline/execution deadline identity."""
+    source_metadata = _load_json_artifact(
+        source_metadata_path,
+        data_root=data_root,
+        error_prefix="Source metadata",
+    )
+    pipeline_manifest = _load_json_artifact(
+        pipeline_manifest_path,
+        data_root=data_root,
+        error_prefix="Pipeline manifest",
+    )
+
+    source_evidence, source_digest = (
+        _validate_deadline_binding_payload(
+            source_metadata,
+            error_prefix="Source metadata",
+        )
+    )
+    pipeline_evidence, pipeline_digest = (
+        _validate_deadline_binding_payload(
+            pipeline_manifest,
+            error_prefix="Pipeline manifest",
+        )
+    )
+
+    if (
+        source_evidence != pipeline_evidence
+        or source_digest != pipeline_digest
+    ):
+        raise PreNightDailyIntegrityError(
+            "Source and pipeline deadline evidence differ"
+        )
+
+    if requested_evidence is not None:
+        requested_normalized, requested_digest = (
+            _canonical_deadline_binding(
+                requested_evidence,
+                error_class=PreNightDailyContractError,
+                error_prefix="Requested",
+            )
+        )
+        if (
+            requested_normalized != source_evidence
+            or requested_digest != source_digest
+        ):
+            raise PreNightDailyIntegrityError(
+                "Requested and cached deadline evidence differ"
+            )
+
+    if execution_manifest is not None:
+        if not isinstance(execution_manifest, dict):
+            raise PreNightDailyIntegrityError(
+                "Execution manifest must be a JSON object"
+            )
+        execution_digest = execution_manifest.get(
+            "deadline_evidence_sha256"
+        )
+        if execution_digest != source_digest:
+            raise PreNightDailyIntegrityError(
+                "Execution manifest deadline_evidence_sha256 mismatch"
+            )
+
+    return {
+        "deadline_evidence": source_evidence,
+        "deadline_evidence_sha256": source_digest,
     }
 
 
@@ -452,6 +628,12 @@ def validate_execution_manifest(
             "sha256": actual_sha256,
         }
 
+    _validate_daily_deadline_chain(
+        validated_artifacts["source_metadata"]["path"],
+        validated_artifacts["pipeline_manifest"]["path"],
+        data_root=root,
+        execution_manifest=manifest,
+    )
     _validate_execution_pipeline_pit_consistency(
         manifest,
         validated_artifacts["pipeline_manifest"]["path"],
@@ -466,7 +648,201 @@ def validate_execution_manifest(
     }
 
 
-def run_pre_night_daily(
+
+# BEGIN RUNNER_V2_OWNED_LOCK
+
+
+def _runner_lock_path(
+    race_date,
+    data_root,
+) -> Path:
+    """Return the Runner-owned lock path for one race date."""
+    manifest_path = build_execution_manifest_path(
+        race_date,
+        data_root,
+    )
+    return manifest_path.with_name(
+        manifest_path.name + ".lock"
+    )
+
+
+def _acquire_runner_lock(
+    race_date,
+    data_root,
+):
+    """Acquire a fail-closed exclusive Runner lock."""
+    date_value = normalize_race_date(race_date)
+    root = Path(data_root)
+    lock_path = _path_within_root(
+        _runner_lock_path(date_value, root),
+        root,
+    )
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    token = uuid.uuid4().hex
+    payload = {
+        "contract_version": EXECUTION_CONTRACT_VERSION,
+        "pid": os.getpid(),
+        "race_date": date_value.isoformat(),
+        "token": token,
+    }
+    encoded = (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+
+    try:
+        descriptor = os.open(
+            lock_path,
+            flags,
+            0o600,
+        )
+    except FileExistsError as exc:
+        raise PreNightDailyContractError(
+            "RUNNER_LOCK_ALREADY_EXISTS: "
+            f"{lock_path}"
+        ) from exc
+
+    opened_stat = os.fstat(descriptor)
+
+    try:
+        offset = 0
+        while offset < len(encoded):
+            written = os.write(
+                descriptor,
+                encoded[offset:],
+            )
+            if written <= 0:
+                raise OSError(
+                    "Runner lock write made no progress"
+                )
+            offset += written
+
+        os.fsync(descriptor)
+    except BaseException:
+        try:
+            current_stat = os.lstat(lock_path)
+            if (
+                current_stat.st_dev == opened_stat.st_dev
+                and current_stat.st_ino == opened_stat.st_ino
+            ):
+                os.unlink(lock_path)
+        finally:
+            os.close(descriptor)
+        raise
+    else:
+        os.close(descriptor)
+
+    return {
+        "path": lock_path,
+        "token": token,
+        "device": opened_stat.st_dev,
+        "inode": opened_stat.st_ino,
+    }
+
+
+def _release_runner_lock(lock_record) -> None:
+    """Release only the lock owned by this Runner execution."""
+    lock_path = Path(lock_record["path"])
+    expected_token = lock_record["token"]
+    expected_device = lock_record["device"]
+    expected_inode = lock_record["inode"]
+
+    read_flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        read_flags |= os.O_NOFOLLOW
+
+    try:
+        descriptor = os.open(lock_path, read_flags)
+    except FileNotFoundError as exc:
+        raise PreNightDailyIntegrityError(
+            "RUNNER_LOCK_OWNERSHIP_LOST: "
+            f"{lock_path}"
+        ) from exc
+    except OSError as exc:
+        raise PreNightDailyIntegrityError(
+            "RUNNER_LOCK_CANNOT_BE_OPENED: "
+            f"{lock_path}"
+        ) from exc
+
+    try:
+        opened_stat = os.fstat(descriptor)
+        chunks = []
+
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+
+    if (
+        opened_stat.st_dev != expected_device
+        or opened_stat.st_ino != expected_inode
+    ):
+        raise PreNightDailyIntegrityError(
+            "RUNNER_LOCK_OWNERSHIP_CHANGED: "
+            f"{lock_path}"
+        )
+
+    try:
+        payload = json.loads(
+            b"".join(chunks).decode("utf-8")
+        )
+    except Exception as exc:
+        # Some filesystems may immediately recycle an inode after
+        # unlink-and-recreate. Therefore matching device/inode values
+        # alone do not establish ownership. If the ownership payload
+        # cannot be decoded, this execution cannot prove that the
+        # current path still names its lock. Preserve the file and
+        # fail closed as an ownership change.
+        raise PreNightDailyIntegrityError(
+            "RUNNER_LOCK_OWNERSHIP_CHANGED: "
+            "ownership payload is invalid: "
+            f"{lock_path}"
+        ) from exc
+
+    if (
+        not isinstance(payload, dict)
+        or payload.get("token") != expected_token
+    ):
+        raise PreNightDailyIntegrityError(
+            "RUNNER_LOCK_TOKEN_MISMATCH: "
+            f"{lock_path}"
+        )
+
+    try:
+        path_stat = os.lstat(lock_path)
+    except FileNotFoundError as exc:
+        raise PreNightDailyIntegrityError(
+            "RUNNER_LOCK_OWNERSHIP_LOST: "
+            f"{lock_path}"
+        ) from exc
+
+    if (
+        path_stat.st_dev != expected_device
+        or path_stat.st_ino != expected_inode
+    ):
+        raise PreNightDailyIntegrityError(
+            "RUNNER_LOCK_OWNERSHIP_CHANGED: "
+            f"{lock_path}"
+        )
+
+    os.unlink(lock_path)
+
+
+# END RUNNER_V2_OWNED_LOCK
+
+
+def _run_pre_night_daily_unlocked(
     race_date,
     data_root,
     *,
@@ -478,6 +854,7 @@ def run_pre_night_daily(
     repository_commit_provider: Callable | None = None,
     prospective_writer: Callable | None = None,
     prospective_validator: Callable | None = None,
+    deadline_evidence=None,
 ) -> dict:
     """Run or plan one PRE_NIGHT program-only collection day."""
 
@@ -521,6 +898,21 @@ def run_pre_night_daily(
             root,
             race_date=date_value,
         )
+
+        if deadline_evidence is not None:
+            _, requested_digest = (
+                _canonical_deadline_binding(
+                    deadline_evidence,
+                    error_class=PreNightDailyContractError,
+                    error_prefix="Requested",
+                )
+            )
+            if requested_digest != cached["manifest"].get(
+                "deadline_evidence_sha256"
+            ):
+                raise PreNightDailyIntegrityError(
+                    "Requested and cached deadline evidence differ"
+                )
 
         commit_provider = (
             repository_commit_provider
@@ -591,6 +983,91 @@ def run_pre_night_daily(
             f"as_of_time={as_of_time.isoformat()}"
         )
 
+    validated_deadline_evidence, requested_deadline_sha256 = (
+        _canonical_deadline_binding(
+            deadline_evidence,
+            error_class=PreNightDailyContractError,
+            error_prefix="Requested",
+        )
+    )
+
+    evidence_race_date = validated_deadline_evidence.get(
+        "race_date"
+    )
+
+    if evidence_race_date != date_value.isoformat():
+        raise PreNightDailyContractError(
+            "Requested deadline_evidence race_date mismatch: "
+            f"expected={date_value.isoformat()}, "
+            f"actual={evidence_race_date!r}"
+        )
+
+    # The immutable Deadline Evidence artifact must be published
+    # and validated before collector or downstream pipeline work.
+    deadline_publication = (
+        publish_pre_night_deadline_evidence(
+            root,
+            deadline_evidence=validated_deadline_evidence,
+        )
+    )
+
+    publication_digest = deadline_publication.get(
+        "deadline_evidence_sha256"
+    )
+
+    if publication_digest != requested_deadline_sha256:
+        raise PreNightDailyIntegrityError(
+            "Published deadline evidence digest mismatch"
+        )
+
+    publication_status = deadline_publication.get(
+        "publication_status"
+    )
+
+    if publication_status not in {
+        "CREATED",
+        "VALIDATED_REUSE",
+    }:
+        raise PreNightDailyIntegrityError(
+            "Published deadline evidence status is invalid: "
+            f"{publication_status!r}"
+        )
+
+    publication_paths = deadline_publication.get(
+        "paths"
+    )
+
+    if not isinstance(publication_paths, dict):
+        raise PreNightDailyIntegrityError(
+            "Published deadline evidence paths are unavailable"
+        )
+
+    deadline_evidence_path_value = (
+        publication_paths.get("deadline_evidence")
+    )
+
+    if deadline_evidence_path_value is None:
+        raise PreNightDailyIntegrityError(
+            "Published deadline evidence path is missing"
+        )
+
+    deadline_evidence_path = Path(
+        deadline_evidence_path_value
+    )
+
+    published_artifact = _artifact_record(
+        deadline_evidence_path,
+        root,
+    )
+
+    if (
+        published_artifact["sha256"]
+        != requested_deadline_sha256
+    ):
+        raise PreNightDailyIntegrityError(
+            "Final deadline evidence artifact digest mismatch"
+        )
+
     collector_function = (
         collector
         or collect_pre_night_program_snapshot
@@ -604,6 +1081,7 @@ def run_pre_night_daily(
         date_value,
         root,
         now_fn=clock,
+        deadline_evidence=validated_deadline_evidence,
     )
 
     pipeline_result = pipeline_function(
@@ -639,6 +1117,18 @@ def run_pre_night_daily(
         data_root=root,
         race_date=date_value,
     )
+    deadline_binding = _validate_daily_deadline_chain(
+        source_metadata,
+        pipeline_manifest,
+        data_root=root,
+        requested_evidence=validated_deadline_evidence,
+    )
+    if deadline_binding["deadline_evidence_sha256"] != (
+        requested_deadline_sha256
+    ):
+        raise PreNightDailyIntegrityError(
+            "Requested deadline evidence digest mismatch"
+        )
     completed_at = require_aware_datetime(
         clock(),
         "completed_at",
@@ -672,6 +1162,9 @@ def run_pre_night_daily(
             EXECUTION_CONTRACT_VERSION
         ),
         "as_of_time": as_of_time.isoformat(),
+        "deadline_evidence_sha256": (
+            deadline_binding["deadline_evidence_sha256"]
+        ),
         "started_at": current_time.isoformat(),
         "completed_at": completed_at.isoformat(),
         "dry_run": False,
@@ -765,6 +1258,136 @@ def run_pre_night_daily(
         "execution_manifest": validated,
         "prospective_manifest": prospective_validated,
     }
+
+
+# BEGIN RUNNER_V2_PUBLIC_LOCKED_ENTRYPOINT
+
+
+def run_pre_night_daily(
+    race_date,
+    data_root,
+    *,
+    dry_run=True,
+    overwrite=False,
+    collector: Callable | None = None,
+    pipeline: Callable | None = None,
+    now_fn=None,
+    repository_commit_provider: Callable | None = None,
+    prospective_writer: Callable | None = None,
+    prospective_validator: Callable | None = None,
+    deadline_evidence=None,
+) -> dict:
+    """Run or plan one PRE_NIGHT program-only collection day."""
+
+    # Preserve the side-effect-free dry-run contract. In particular,
+    # no lock directory or lock file is created.
+    if dry_run:
+        return _run_pre_night_daily_unlocked(
+            race_date,
+            data_root,
+            dry_run=True,
+            overwrite=overwrite,
+            collector=collector,
+            pipeline=pipeline,
+            now_fn=now_fn,
+            repository_commit_provider=(
+                repository_commit_provider
+            ),
+            prospective_writer=prospective_writer,
+            prospective_validator=prospective_validator,
+            deadline_evidence=deadline_evidence,
+        )
+
+    date_value = normalize_race_date(race_date)
+    root = Path(data_root)
+    execution_manifest_path = (
+        build_execution_manifest_path(
+            date_value,
+            root,
+        )
+    )
+
+    core_now_fn = now_fn
+
+    # For a new live run, retain the existing fail-without-write
+    # behavior for invalid time/evidence. The sampled time is replayed
+    # to the core so the observable clock sequence is unchanged.
+    if not (
+        execution_manifest_path.is_file()
+        and not overwrite
+    ):
+        clock = now_fn or (
+            lambda: dt.datetime.now(dt.timezone.utc)
+        )
+        sampled_time = require_aware_datetime(
+            clock(),
+            "current_time",
+        )
+        as_of_time = build_pre_night_as_of(date_value)
+
+        if sampled_time > as_of_time:
+            raise PreNightDailyDeadlineError(
+                "Live PRE_NIGHT acquisition cannot start "
+                "after as_of_time: "
+                f"current_time={sampled_time.isoformat()}, "
+                f"as_of_time={as_of_time.isoformat()}"
+            )
+
+        validated_evidence, _ = (
+            _canonical_deadline_binding(
+                deadline_evidence,
+                error_class=PreNightDailyContractError,
+                error_prefix="Requested",
+            )
+        )
+        evidence_race_date = validated_evidence.get(
+            "race_date"
+        )
+
+        if evidence_race_date != date_value.isoformat():
+            raise PreNightDailyContractError(
+                "Requested deadline_evidence race_date mismatch: "
+                f"expected={date_value.isoformat()}, "
+                f"actual={evidence_race_date!r}"
+            )
+
+        replay_pending = True
+
+        def replay_clock():
+            nonlocal replay_pending
+            if replay_pending:
+                replay_pending = False
+                return sampled_time
+            return clock()
+
+        core_now_fn = replay_clock
+
+    lock_record = _acquire_runner_lock(
+        date_value,
+        root,
+    )
+
+    try:
+        return _run_pre_night_daily_unlocked(
+            date_value,
+            root,
+            dry_run=False,
+            overwrite=overwrite,
+            collector=collector,
+            pipeline=pipeline,
+            now_fn=core_now_fn,
+            repository_commit_provider=(
+                repository_commit_provider
+            ),
+            prospective_writer=prospective_writer,
+            prospective_validator=prospective_validator,
+            deadline_evidence=deadline_evidence,
+        )
+    finally:
+        _release_runner_lock(lock_record)
+
+
+# END RUNNER_V2_PUBLIC_LOCKED_ENTRYPOINT
 
 # BEGIN PRE_NIGHT_PIT_SAFETY_GATE_V1_MANIFEST_INTEGRATION
 from boatrace_ai.pipelines.pre_night_eligibility import (
