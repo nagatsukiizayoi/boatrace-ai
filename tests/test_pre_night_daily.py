@@ -1464,3 +1464,491 @@ def test_d1b3_t21_execution_manifest_contract_is_v2(
 
 
 # END PHASE1_D1B3_TESTS
+# BEGIN RUNNER_V2_LOCK_TESTS
+
+
+def _r2_lock_path(root):
+    return pre_night_daily._runner_lock_path(
+        RACE_DATE,
+        root,
+    )
+
+
+def _r2_live_kwargs(collector, pipeline):
+    return {
+        "dry_run": False,
+        "deadline_evidence": VALID_DEADLINE_EVIDENCE,
+        "collector": collector,
+        "pipeline": pipeline,
+        "now_fn": lambda: BEFORE_AS_OF,
+        "repository_commit_provider": lambda: "a" * 40,
+    }
+
+
+def test_r2_public_api_signature_is_unchanged():
+    import inspect
+
+    signature = inspect.signature(
+        pre_night_daily.run_pre_night_daily
+    )
+    parameters = signature.parameters
+
+    assert list(parameters) == [
+        "race_date",
+        "data_root",
+        "dry_run",
+        "overwrite",
+        "collector",
+        "pipeline",
+        "now_fn",
+        "repository_commit_provider",
+        "prospective_writer",
+        "prospective_validator",
+        "deadline_evidence",
+    ]
+    assert parameters["race_date"].kind is (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD
+    )
+    assert parameters["data_root"].kind is (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD
+    )
+    for name in list(parameters)[2:]:
+        assert parameters[name].kind is (
+            inspect.Parameter.KEYWORD_ONLY
+        )
+    assert parameters["dry_run"].default is True
+    assert parameters["overwrite"].default is False
+
+
+def test_r2_dry_run_is_deterministic_and_creates_no_lock(
+    tmp_path,
+):
+    first = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=True,
+        now_fn=lambda: BEFORE_AS_OF,
+    )
+    second = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=True,
+        now_fn=lambda: BEFORE_AS_OF,
+    )
+
+    assert first == second
+    assert not _r2_lock_path(tmp_path).exists()
+    assert not tmp_path.exists() or list(tmp_path.iterdir()) == []
+
+
+def test_r2_lock_payload_is_present_during_collector(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    base_collector, pipeline = make_fake_functions(calls)
+    captured = {}
+
+    def collector(*args, **kwargs):
+        lock_path = _r2_lock_path(tmp_path)
+        assert lock_path.is_file()
+        captured.update(
+            json.loads(lock_path.read_text(encoding="utf-8"))
+        )
+        return base_collector(*args, **kwargs)
+
+    pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        **_r2_live_kwargs(collector, pipeline),
+    )
+
+    assert captured["race_date"] == RACE_DATE.isoformat()
+    assert captured["contract_version"] == (
+        pre_night_daily.EXECUTION_CONTRACT_VERSION
+    )
+    assert isinstance(captured["pid"], int)
+    assert captured["pid"] > 0
+    assert isinstance(captured["token"], str)
+    assert captured["token"]
+    assert not _r2_lock_path(tmp_path).exists()
+
+
+def test_r2_existing_lock_rejects_before_all_child_stages(
+    tmp_path,
+    monkeypatch,
+):
+    calls = {
+        "publication": 0,
+        "collector": 0,
+        "pipeline": 0,
+    }
+    collector, pipeline = make_fake_functions(calls)
+
+    original_publication = (
+        pre_night_daily.publish_pre_night_deadline_evidence
+    )
+
+    def publication(*args, **kwargs):
+        calls["publication"] += 1
+        return original_publication(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pre_night_daily,
+        "publish_pre_night_deadline_evidence",
+        publication,
+    )
+
+    lock_path = _r2_lock_path(tmp_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(
+        "foreign-runner-lock\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        pre_night_daily.PreNightDailyContractError,
+        match="RUNNER_LOCK_ALREADY_EXISTS",
+    ):
+        pre_night_daily.run_pre_night_daily(
+            RACE_DATE,
+            tmp_path,
+            **_r2_live_kwargs(collector, pipeline),
+        )
+
+    assert calls == {
+        "publication": 0,
+        "collector": 0,
+        "pipeline": 0,
+    }
+
+
+def test_r2_existing_lock_is_not_deleted_or_modified(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+    lock_path = _r2_lock_path(tmp_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    original_bytes = b"foreign-owner-stale-lock\n"
+    lock_path.write_bytes(original_bytes)
+    original_stat = lock_path.stat()
+
+    with pytest.raises(
+        pre_night_daily.PreNightDailyContractError,
+        match="RUNNER_LOCK_ALREADY_EXISTS",
+    ):
+        pre_night_daily.run_pre_night_daily(
+            RACE_DATE,
+            tmp_path,
+            **_r2_live_kwargs(collector, pipeline),
+        )
+
+    current_stat = lock_path.stat()
+    assert lock_path.read_bytes() == original_bytes
+    assert current_stat.st_ino == original_stat.st_ino
+    assert calls == {"collector": 0, "pipeline": 0}
+
+
+def test_r2_successful_execution_removes_owned_lock(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+
+    result = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        **_r2_live_kwargs(collector, pipeline),
+    )
+
+    assert result["status"] == "SUCCESS"
+    assert calls == {"collector": 1, "pipeline": 1}
+    assert not _r2_lock_path(tmp_path).exists()
+
+
+def test_r2_collector_failure_removes_lock_and_stops_pipeline(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+
+    def collector(*args, **kwargs):
+        calls["collector"] += 1
+        assert _r2_lock_path(tmp_path).is_file()
+        raise RuntimeError("injected collector failure")
+
+    def pipeline(*args, **kwargs):
+        calls["pipeline"] += 1
+        pytest.fail("pipeline must not run")
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected collector failure",
+    ):
+        pre_night_daily.run_pre_night_daily(
+            RACE_DATE,
+            tmp_path,
+            **_r2_live_kwargs(collector, pipeline),
+        )
+
+    assert calls == {"collector": 1, "pipeline": 0}
+    assert not _r2_lock_path(tmp_path).exists()
+
+
+def test_r2_pipeline_failure_removes_owned_lock(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, _ = make_fake_functions(calls)
+
+    def pipeline(*args, **kwargs):
+        calls["pipeline"] += 1
+        assert _r2_lock_path(tmp_path).is_file()
+        raise RuntimeError("injected pipeline failure")
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected pipeline failure",
+    ):
+        pre_night_daily.run_pre_night_daily(
+            RACE_DATE,
+            tmp_path,
+            **_r2_live_kwargs(collector, pipeline),
+        )
+
+    assert calls == {"collector": 1, "pipeline": 1}
+    assert not _r2_lock_path(tmp_path).exists()
+
+
+def test_r2_child_stage_order_and_final_validation_lock(
+    tmp_path,
+    monkeypatch,
+):
+    events = []
+    calls = {"collector": 0, "pipeline": 0}
+    base_collector, base_pipeline = make_fake_functions(calls)
+
+    original_publication = (
+        pre_night_daily.publish_pre_night_deadline_evidence
+    )
+    original_writer = (
+        pre_night_daily.write_prospective_manifest
+    )
+    original_validator = (
+        pre_night_daily.validate_prospective_manifest
+    )
+
+    def assert_locked(stage):
+        assert _r2_lock_path(tmp_path).is_file()
+        events.append(stage)
+
+    def publication(*args, **kwargs):
+        assert_locked("deadline_publication")
+        return original_publication(*args, **kwargs)
+
+    def collector(*args, **kwargs):
+        assert_locked("collector")
+        return base_collector(*args, **kwargs)
+
+    def pipeline(*args, **kwargs):
+        assert_locked("pipeline")
+        return base_pipeline(*args, **kwargs)
+
+    def writer(*args, **kwargs):
+        assert_locked("prospective_writer")
+        return original_writer(*args, **kwargs)
+
+    def validator(*args, **kwargs):
+        assert_locked("prospective_validator")
+        return original_validator(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pre_night_daily,
+        "publish_pre_night_deadline_evidence",
+        publication,
+    )
+
+    result = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=False,
+        deadline_evidence=VALID_DEADLINE_EVIDENCE,
+        collector=collector,
+        pipeline=pipeline,
+        now_fn=lambda: BEFORE_AS_OF,
+        repository_commit_provider=lambda: "a" * 40,
+        prospective_writer=writer,
+        prospective_validator=validator,
+    )
+
+    assert result["status"] == "SUCCESS"
+    assert events == [
+        "deadline_publication",
+        "collector",
+        "pipeline",
+        "prospective_writer",
+        "prospective_validator",
+    ]
+    assert not _r2_lock_path(tmp_path).exists()
+
+
+def test_r2_cached_execution_holds_lock_during_validation(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+
+    pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        **_r2_live_kwargs(collector, pipeline),
+    )
+
+    validations = []
+    original_validator = (
+        pre_night_daily.validate_prospective_manifest
+    )
+
+    def validator(*args, **kwargs):
+        validations.append(_r2_lock_path(tmp_path).is_file())
+        return original_validator(*args, **kwargs)
+
+    result = pre_night_daily.run_pre_night_daily(
+        RACE_DATE,
+        tmp_path,
+        dry_run=False,
+        deadline_evidence=VALID_DEADLINE_EVIDENCE,
+        collector=collector,
+        pipeline=pipeline,
+        now_fn=lambda: AFTER_AS_OF,
+        repository_commit_provider=lambda: "a" * 40,
+        prospective_validator=validator,
+    )
+
+    assert result["cached"] is True
+    assert validations == [True]
+    assert calls == {"collector": 1, "pipeline": 1}
+    assert not _r2_lock_path(tmp_path).exists()
+
+
+def test_r2_replaced_lock_is_preserved_fail_closed(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    intruder_bytes = b"replacement-owned-by-another-runner\n"
+
+    def collector(*args, **kwargs):
+        calls["collector"] += 1
+        lock_path = _r2_lock_path(tmp_path)
+        assert lock_path.is_file()
+        lock_path.unlink()
+        lock_path.write_bytes(intruder_bytes)
+        raise RuntimeError("failure after replacement")
+
+    def pipeline(*args, **kwargs):
+        calls["pipeline"] += 1
+        pytest.fail("pipeline must not run")
+
+    with pytest.raises(
+        pre_night_daily.PreNightDailyIntegrityError,
+        match="RUNNER_LOCK_OWNERSHIP_CHANGED",
+    ):
+        pre_night_daily.run_pre_night_daily(
+            RACE_DATE,
+            tmp_path,
+            **_r2_live_kwargs(collector, pipeline),
+        )
+
+    lock_path = _r2_lock_path(tmp_path)
+    assert lock_path.is_file()
+    assert lock_path.read_bytes() == intruder_bytes
+    assert calls == {"collector": 1, "pipeline": 0}
+
+
+def test_r2_lock_path_uses_existing_manifest_boundary(
+    tmp_path,
+):
+    manifest_path = (
+        pre_night_daily.build_execution_manifest_path(
+            RACE_DATE,
+            tmp_path,
+        )
+    )
+    lock_path = _r2_lock_path(tmp_path)
+
+    assert lock_path == manifest_path.with_name(
+        manifest_path.name + ".lock"
+    )
+    assert lock_path.name == "2026-08-10.json.lock"
+    assert lock_path.parent == manifest_path.parent
+    lock_path.resolve().relative_to(tmp_path.resolve())
+
+
+def test_r2_prospective_failure_still_removes_lock(
+    tmp_path,
+):
+    calls = {"collector": 0, "pipeline": 0}
+    collector, pipeline = make_fake_functions(calls)
+
+    from boatrace_ai.pipelines.pre_night_prospective import (
+        PreNightProspectiveIntegrityError,
+    )
+
+    def failing_writer(*args, **kwargs):
+        assert _r2_lock_path(tmp_path).is_file()
+        raise PreNightProspectiveIntegrityError(
+            "injected prospective failure"
+        )
+
+    with pytest.raises(
+        pre_night_daily.PreNightDailyIntegrityError,
+        match="Prospective manifest creation failed",
+    ):
+        pre_night_daily.run_pre_night_daily(
+            RACE_DATE,
+            tmp_path,
+            dry_run=False,
+            deadline_evidence=VALID_DEADLINE_EVIDENCE,
+            collector=collector,
+            pipeline=pipeline,
+            now_fn=lambda: BEFORE_AS_OF,
+            repository_commit_provider=lambda: "a" * 40,
+            prospective_writer=failing_writer,
+        )
+
+    assert calls == {"collector": 1, "pipeline": 1}
+    assert not _r2_lock_path(tmp_path).exists()
+
+
+def test_r2_source_adds_no_forbidden_side_effect_imports():
+    import ast
+    import inspect
+
+    source = inspect.getsource(pre_night_daily)
+    tree = ast.parse(source)
+
+    imported_roots = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_roots.update(
+                alias.name.split(".", 1)[0]
+                for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(
+                node.module.split(".", 1)[0]
+            )
+
+    assert imported_roots.isdisjoint(
+        {
+            "socket",
+            "subprocess",
+            "requests",
+            "urllib",
+            "httpx",
+            "paramiko",
+        }
+    )
+
+
+# END RUNNER_V2_LOCK_TESTS
