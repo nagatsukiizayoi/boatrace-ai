@@ -33,6 +33,12 @@ REQUIRED_BRANCH = (
     "feature/pre-night-authoritative-deadline-pit-contract-v2"
 )
 
+AUTHORIZED_BRANCHES = frozenset({
+    REQUIRED_BRANCH,
+    "feature/pre-night-runtime-wiring-v1",
+    "main",
+})
+
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _HEAD_RE = re.compile(r"^[0-9a-f]{40}$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -781,7 +787,7 @@ def publish_pre_night_manifest_chain(
     )
     branch = _require_text(branch, "branch")
 
-    if branch != REQUIRED_BRANCH:
+    if branch not in AUTHORIZED_BRANCHES:
         raise PreNightManifestChainContractError(
             "branch does not match the authorized branch"
         )

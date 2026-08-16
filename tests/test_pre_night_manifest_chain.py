@@ -429,3 +429,16 @@ def test_rejects_backslash_in_snapshot_relative_path(tmp_path):
         inputs["binding"].parent
         / "execution_manifest.json"
     ).exists()
+
+
+def test_accepts_main_as_runtime_branch(tmp_path):
+    install_inputs(tmp_path)
+
+    result = publish(
+        tmp_path,
+        branch="main",
+    )
+
+    assert result["publication_status"] == "CREATED"
+    assert result["paths"]["pipeline_manifest"].is_file()
+    assert result["paths"]["execution_manifest"].is_file()
