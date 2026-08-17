@@ -463,15 +463,15 @@ DATASET_SCHEMA_VALUE = _dataset_schema_value()
 
 
 def _paths(
-    data_root: Any,
+    authority_root: Any,
     race_date: str,
     run_id: str,
 ) -> dict[str, Path]:
-    raw_root = Path(data_root)
+    raw_root = Path(authority_root)
 
     if raw_root.exists() and raw_root.is_symlink():
         raise ProspectiveV3ContractError(
-            "data_root must not be symlink"
+            "authority_root must not be symlink"
         )
 
     root = raw_root.resolve(strict=False)
@@ -479,8 +479,6 @@ def _paths(
 
     run_directory = (
         root
-        / "prospective"
-        / "pre_night"
         / "runs"
         / f"{date_value.year:04d}"
         / f"{date_value.month:02d}"
@@ -490,8 +488,6 @@ def _paths(
 
     collection = (
         root
-        / "prospective"
-        / "pre_night"
         / "deadline_evidence_collections"
         / f"{date_value.year:04d}"
         / f"{date_value.month:02d}"
@@ -1334,11 +1330,52 @@ def _prepare(
     branch = _require_branch(branch)
     head = _require_head(head)
 
-    paths = _paths(
-        data_root,
-        race_date,
-        run_id,
-    )
+    supplied_root = Path(data_root)
+
+    if (
+        supplied_root.name == "pre_night"
+        and supplied_root.parent.name == "prospective"
+    ):
+        # Explicit Option A authority-root contract.
+        paths = _paths(
+            supplied_root,
+            race_date,
+            run_id,
+        )
+    else:
+        # Backward-compatible public contract: existing callers pass
+        # the namespace data_root and Stage 2-5 artifacts live below
+        # data_root/prospective/pre_night.
+        if (
+            supplied_root.exists()
+            and supplied_root.is_symlink()
+        ):
+            raise ProspectiveV3ContractError(
+                "data_root must not be symlink"
+            )
+
+        namespace_root = supplied_root.resolve(
+            strict=False
+        )
+        authority_root = (
+            namespace_root
+            / "prospective"
+            / "pre_night"
+        )
+
+        paths = _paths(
+            authority_root,
+            race_date,
+            run_id,
+        )
+
+        # Existing Stage 4 artifact records are relative to the
+        # namespace root, not to the authority subdirectory.
+        paths = {
+            **paths,
+            "root": namespace_root,
+        }
+
     root = paths["root"]
 
     for label in (

@@ -372,6 +372,7 @@ def run_pre_night_bound_daily(
     race_date,
     data_root,
     *,
+    authority_root=None,
     venue_code,
     run_id,
     dry_run=True,
@@ -397,6 +398,44 @@ def run_pre_night_bound_daily(
     race_date = _require_race_date(race_date)
     venue_code = _require_venue_code(venue_code)
     root = Path(data_root)
+
+    if authority_root is None:
+        authority = (
+            root
+            / "prospective"
+            / "pre_night"
+        ).resolve(strict=False)
+        authority_namespace_root = root
+    else:
+        raw_authority = Path(authority_root)
+
+        if (
+            raw_authority.exists()
+            and raw_authority.is_symlink()
+        ):
+            raise PreNightBoundDailyContractError(
+                "authority_root must not be symlink"
+            )
+
+        authority = raw_authority.resolve(strict=False)
+
+        if authority.name != "pre_night":
+            raise PreNightBoundDailyContractError(
+                "authority_root must end with "
+                "prospective/pre_night"
+            )
+
+        prospective_directory = authority.parent
+
+        if prospective_directory.name != "prospective":
+            raise PreNightBoundDailyContractError(
+                "authority_root must end with "
+                "prospective/pre_night"
+            )
+
+        authority_namespace_root = (
+            prospective_directory.parent
+        )
 
     # Fail closed before the daily runner performs network or file work.
     authorization: dict[str, Any] | None = None
@@ -429,12 +468,18 @@ def run_pre_night_bound_daily(
             "test_state",
         )
 
+    daily_arguments = {
+        "dry_run": dry_run,
+        "overwrite": overwrite,
+        "deadline_evidence": deadline_evidence,
+    }
+
+    # The legacy daily runner remains staging-only. Authority
+    # storage is used by the venue-bound provenance stages below.
     daily_result = daily_runner(
         race_date,
         root,
-        dry_run=dry_run,
-        overwrite=overwrite,
-        deadline_evidence=deadline_evidence,
+        **daily_arguments,
     )
 
     if not isinstance(daily_result, Mapping):
@@ -497,7 +542,7 @@ def run_pre_night_bound_daily(
     )
 
     stage2 = deadline_collector(
-        root,
+        authority_namespace_root,
         race_date=race_date,
         expected_venue_codes=[venue_code],
     )
@@ -519,7 +564,7 @@ def run_pre_night_bound_daily(
         )
 
     stage3 = binding_publisher(
-        root,
+        authority_namespace_root,
         run_id=run_id,
         race_date=race_date,
         deadline_evidence_collection_sha256=(
@@ -540,7 +585,7 @@ def run_pre_night_bound_daily(
 
     snapshot = _publish_snapshot_link(
         output_parquet,
-        root=root,
+        root=authority_namespace_root,
         race_date=race_date,
         run_id=run_id,
     )
@@ -609,11 +654,11 @@ def run_pre_night_bound_daily(
         )
 
     snapshot_relative_path = snapshot.relative_to(
-        root
+        authority_namespace_root
     ).as_posix()
 
     stage4 = manifest_publisher(
-        root,
+        authority_namespace_root,
         race_date=race_date,
         run_id=run_id,
         snapshot_relative_path=snapshot_relative_path,
