@@ -347,11 +347,11 @@ authority root.
 values: `data_root` and `authority_root`. The authority root must not be
 derived implicitly from the staging root.
 
-In the current minimal CLI phase, `--authority-root` is declared but its
-runtime wiring is not implemented. If `--authority-root` is supplied,
-the CLI must fail closed before pipeline execution. This declaration
-does not authorize collection, publication, model inference, betting,
-or live execution.
+The public CLI parser requires `--authority-root` and forwards it
+explicitly through the venue-bound runtime wiring. Legacy programmatic
+invocations are handled only by the compatibility adapter in `main()`.
+This storage-authority wiring does not authorize collection, publication,
+model inference, betting, or live execution.
 
 <!-- authority-root-backward-compatibility -->
 
