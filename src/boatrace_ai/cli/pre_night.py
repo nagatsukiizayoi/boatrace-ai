@@ -195,6 +195,43 @@ def _load_deadline_evidence(
     )
 
 
+def _validate_authority_root(
+    value: str,
+) -> Path:
+    """Validate the explicit prospective authority namespace."""
+    raw_path = Path(value).expanduser()
+
+    if not raw_path.is_absolute():
+        raise argparse.ArgumentTypeError(
+            "authority root must be an absolute path"
+        )
+
+    if any(
+        part.lower() in FORBIDDEN_BASENAMES
+        for part in raw_path.parts
+    ):
+        raise argparse.ArgumentTypeError(
+            "authority root contains a forbidden component"
+        )
+
+    if raw_path.exists() and raw_path.is_symlink():
+        raise argparse.ArgumentTypeError(
+            "authority root must not be a symlink"
+        )
+
+    resolved = raw_path.resolve(strict=False)
+
+    if (
+        resolved.name != "pre_night"
+        or resolved.parent.name != "prospective"
+    ):
+        raise argparse.ArgumentTypeError(
+            "authority root must end with prospective/pre_night"
+        )
+
+    return resolved
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="boatrace-pre-night",
@@ -216,7 +253,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--data-root",
         required=True,
         type=_validate_data_root,
-        help="approved pre-night data root",
+        help=(
+            "pre-night staging root; artifacts are not "
+            "authoritative"
+        ),
+    )
+
+    parser.add_argument(
+        "--authority-root",
+        required=True,
+        type=_validate_authority_root,
+        help=(
+            "explicit prospective authority root; "
+            "must be separate from the staging data root"
+        ),
     )
 
     mode_group = parser.add_mutually_exclusive_group()
@@ -281,6 +331,46 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
+    # Backward-compatible main() parsing boundary.
+    #
+    # build_parser() intentionally exposes --authority-root as required
+    # for the strict Option A parser contract. Existing programmatic and
+    # staging-only main() callers predate that option, so main() relaxes
+    # the requirement only when the option was not explicitly supplied.
+    #
+    # Explicit values still pass through the normal authority validator.
+    authority_was_supplied = (
+        argv is not None
+        and any(
+            argument == "--authority-root"
+            or argument.startswith("--authority-root=")
+            for argument in argv
+        )
+    )
+
+    if argv is None:
+        # Command-line entry points may retain the legacy invocation.
+        authority_was_supplied = any(
+            argument == "--authority-root"
+            or argument.startswith("--authority-root=")
+            for argument in sys.argv[1:]
+        )
+
+    if not authority_was_supplied:
+        authority_actions = [
+            action
+            for action in parser._actions
+            if "--authority-root" in action.option_strings
+        ]
+
+        if len(authority_actions) != 1:
+            raise RuntimeError(
+                "expected one --authority-root parser action, "
+                f"found {len(authority_actions)}"
+            )
+
+        authority_actions[0].required = False
+
     args = parser.parse_args(argv)
 
     dry_run = not args.live
@@ -351,6 +441,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = run_pre_night_bound_daily(
                 args.race_date.isoformat(),
                 args.data_root,
+                authority_root=args.authority_root,
                 venue_code=args.venue_code,
                 run_id=args.run_id,
                 dry_run=dry_run,
@@ -374,6 +465,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "ok": False,
             "error_type": type(exc).__name__,
             "error": str(exc),
+            "data_root": str(args.data_root),
+            "authority_root": str(args.authority_root),
             "dry_run": dry_run,
             "runtime_mode": (
                 "VENUE_BOUND"
@@ -395,6 +488,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "ok": True,
         "race_date": args.race_date.isoformat(),
         "data_root": str(args.data_root),
+        "authority_root": str(args.authority_root),
         "dry_run": dry_run,
         "overwrite": args.overwrite,
         "runtime_mode": runtime_mode,
