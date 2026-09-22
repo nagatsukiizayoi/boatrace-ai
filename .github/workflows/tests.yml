@@ -6,16 +6,11 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "scripts/**"
       - "requirements.txt"
       - "pyproject.toml"
       - ".github/workflows/tests.yml"
   pull_request:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "requirements.txt"
-      - "pyproject.toml"
-      - ".github/workflows/tests.yml"
 
 permissions:
   contents: read
@@ -38,5 +33,7 @@ jobs:
           python -m pip install -e . pytest
       - name: Compile Python sources
         run: python -m compileall -q src tests
+      - name: Compile n20 collector sources
+        run: python -m py_compile scripts/n20_collect.py scripts/n20_lib.py
       - name: Run tests
         run: python -m pytest -q
