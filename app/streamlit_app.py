@@ -1,6 +1,6 @@
 
 # -*- coding: utf-8 -*-
-"""N20 LIVE viewer v0 (read-only)"""
+"""N20 LIVE viewer v0.1 (read-only)"""
 import datetime as dt
 import io
 
@@ -16,6 +16,8 @@ BASE_DIR = "data/live"
 API = f"https://api.github.com/repos/{OWNER}/{REPO}/contents"
 RAW = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}"
 
+JST = dt.timezone(dt.timedelta(hours=9))
+NOMINAL = {3: 180, 5: 300, 8: 480, 12: 720}
 VENUE_NAMES = {}
 
 st.set_page_config(page_title="N20 LIVE viewer", layout="wide")
@@ -118,17 +120,28 @@ c5.metric("win_cov", f"{win_cov:.3f}")
 if n_valid < n_all:
     st.error(f"lag_sec <= 0（締切後取得）が {n_all - n_valid} 行あります。学習・評価では除外してください。")
 
+if "o_status" in d.columns:
+    zp = int((d["o_status"] == "zero_pool").sum())
+    if zp:
+        st.info(f"o_status=zero_pool が {zp} 行あります（プール未形成。欠損ではありません）。")
+
 if "window" in d.columns:
     st.subheader("window 別カバレッジ")
-    g = d.groupby("window", dropna=False)
+    g = d.groupby("window_n", dropna=False)
     cov = pd.DataFrame({
         "rows": g.size(),
         "lag_gt0": g["valid"].mean().round(3),
         "exh_cov": g["exhibition_time"].apply(lambda s: (s != "").mean()).round(3),
         "win_cov": g["o_status"].apply(lambda s: (s == "ok").mean()).round(3),
         "lag_med": g["lag_sec_n"].median().round(1),
-    }).reset_index()
+    }).reset_index().rename(columns={"window_n": "window"})
+    cov["window"] = cov["window"].astype("Int64")
+    cov = cov.sort_values("window", ascending=False).reset_index(drop=True)
+    cov["nominal"] = cov["window"].map(NOMINAL)
+    cov["gap_sec"] = (cov["lag_med"] - cov["nominal"]).round(1)
+    cov["gap_pct"] = (cov["gap_sec"] / cov["nominal"] * 100).round(1)
     st.dataframe(cov, use_container_width=True, hide_index=True)
+    st.caption("nominal は window の名目秒数 (T-N分)。gap が負なら名目より締切寄りで取得。")
 
 st.subheader("レース一覧")
 keys = [k for k in ("venue", "race_no", "window") if k in d.columns]
@@ -145,6 +158,8 @@ cols = [c for c in ("venue", "race_no", "window", "boat_no", "o", "o_status",
                     "q3t", "exhibition_time", "obs_ts", "deadline", "lag_sec", "_src")
         if c in view.columns]
 tbl = view[cols].copy()
+if "q3t" in tbl.columns:
+    tbl["q3t"] = pd.to_numeric(tbl["q3t"], errors="coerce").round(4)
 
 
 def _row_style(row):
@@ -163,4 +178,4 @@ st.download_button("表示中のデータをCSVダウンロード",
                    file_name=f"n20_{day}_view.csv", mime="text/csv")
 
 st.caption(f"source: {OWNER}/{REPO}@{BRANCH} {BASE_DIR}/{day} / "
-           f"rendered {dt.datetime.now():%Y-%m-%d %H:%M:%S}")
+           f"rendered {dt.datetime.now(JST):%Y-%m-%d %H:%M:%S} JST")
