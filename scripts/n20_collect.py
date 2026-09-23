@@ -103,6 +103,10 @@ def run_task(t, hd):
         meta['sha_beforeinfo'] = save_raw(hd, jcd, rno, w, 'beforeinfo', bi)
         try:
             e = parse_exh2(bi)
+            if hasattr(e, 'itertuples') and 'exhibition_time' in list(getattr(e, 'columns', [])):
+                exh = {int(r.boat_no): float(r.exhibition_time) for r in e.itertuples() if r.exhibition_time is not None and r.exhibition_time == r.exhibition_time}
+                e = None
+
             if isinstance(e, dict) and 'exhibition_time' in e: e = e['exhibition_time']
             if isinstance(e, dict): exh = {int(k): float(v) for k, v in e.items() if v}
             elif isinstance(e, (list, tuple)): exh = {i+1: float(v) for i, v in enumerate(e) if v}
