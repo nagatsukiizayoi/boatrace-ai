@@ -1,0 +1,86 @@
+{
+  "race_date": "2026-09-23",
+  "attempt": 1,
+  "first_success_jst": "2026-09-24T18:11:29.114792+09:00",
+  "elapsed_sec": 0.0,
+  "result": {
+    "paths": {
+      "program": "/home/ubuntu/boatrace-ai/data/curated/entries/2026/09/23/program_entries.parquet",
+      "result": "/home/ubuntu/boatrace-ai/data/curated/results/2026/09/23/race_results.parquet",
+      "payout": "/home/ubuntu/boatrace-ai/data/curated/payouts/2026/09/23/race_payouts.parquet",
+      "merged": "/home/ubuntu/boatrace-ai/data/curated/races/2026/09/23/program_result_merged.parquet",
+      "quality": "/home/ubuntu/boatrace-ai/data/curated/races/2026/09/23/quality.json"
+    },
+    "quality": {
+      "race_date": "2026-09-23",
+      "record_count": 936,
+      "program_record_count": 936,
+      "result_record_count": 936,
+      "venue_count": 13,
+      "race_count": 156,
+      "duplicate_keys": 0,
+      "program_duplicate_keys": 0,
+      "result_duplicate_keys": 0,
+      "merge_counts": {
+        "both": 936,
+        "left_only": 0,
+        "right_only": 0
+      },
+      "left_only": 0,
+      "right_only": 0,
+      "partial_result_missing": 0,
+      "cancelled_entry_count": 0,
+      "cancelled_race_count": 0,
+      "cancelled_races": [],
+      "invalid_race_size": 0,
+      "invalid_boat_sets": 0,
+      "name_exact_mismatch": 105,
+      "name_expected_abbreviation": 105,
+      "name_unexplained_mismatch": 0,
+      "motor_mismatch": 0,
+      "boat_equipment_mismatch": 0,
+      "special_finish_count": 18,
+      "finish_status_counts": {
+        "01": 156,
+        "03": 156,
+        "02": 156,
+        "04": 156,
+        "05": 153,
+        "06": 141,
+        "S0": 8,
+        "S1": 4,
+        "S2": 3,
+        "F": 2,
+        "K0": 1
+      },
+      "payout_record_count": 1560,
+      "payout_group_count": 1092,
+      "payout_expected_group_count": 1092,
+      "payout_missing_group_count": 0,
+      "payout_unexpected_group_count": 0,
+      "payout_duplicate_keys": 0,
+      "payout_invalid_combinations": 0,
+      "payout_invalid_amounts": 0,
+      "payout_invalid_popularity": 0,
+      "payout_summary_mismatch": 0,
+      "payout_cancelled_group_count": 0,
+      "payout_not_established_count": 0,
+      "payout_special_count": 0,
+      "payout_status_counts": {
+        "NORMAL": 1560
+      },
+      "payout_bet_type_counts": {
+        "QUINELLA_PLACE": 468,
+        "PLACE": 312,
+        "WIN": 156,
+        "EXACTA": 156,
+        "QUINELLA": 156,
+        "TRIFECTA": 156,
+        "TRIO": 156
+      },
+      "created_at": "2026-09-23T17:32:28.222574+00:00",
+      "status": "SUCCESS"
+    },
+    "skipped": true
+  }
+}

@@ -1,0 +1,684 @@
+{
+  "race_date": "2026-09-24",
+  "attempt": 1,
+  "first_success_jst": "2026-09-24T16:14:13.781588+09:00",
+  "elapsed_sec": 19.1,
+  "result": {
+    "paths": {
+      "program": "/home/ubuntu/boatrace-ai/data/curated/entries/2026/09/24/program_entries.parquet",
+      "result": "/home/ubuntu/boatrace-ai/data/curated/results/2026/09/24/race_results.parquet",
+      "payout": "/home/ubuntu/boatrace-ai/data/curated/payouts/2026/09/24/race_payouts.parquet",
+      "merged": "/home/ubuntu/boatrace-ai/data/curated/races/2026/09/24/program_result_merged.parquet",
+      "quality": "/home/ubuntu/boatrace-ai/data/curated/races/2026/09/24/quality.json"
+    },
+    "quality": {
+      "race_date": "2026-09-24",
+      "record_count": 936,
+      "program_record_count": 936,
+      "result_record_count": 216,
+      "venue_count": 13,
+      "race_count": 156,
+      "duplicate_keys": 0,
+      "program_duplicate_keys": 0,
+      "result_duplicate_keys": 0,
+      "merge_counts": {
+        "left_only": 720,
+        "both": 216,
+        "right_only": 0
+      },
+      "left_only": 720,
+      "right_only": 0,
+      "partial_result_missing": 0,
+      "cancelled_entry_count": 720,
+      "cancelled_race_count": 120,
+      "cancelled_races": [
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "01",
+          "race_no": 12
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "02",
+          "race_no": 12
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "06",
+          "race_no": 12
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "08",
+          "race_no": 12
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "09",
+          "race_no": 12
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "11",
+          "race_no": 12
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "13",
+          "race_no": 12
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "19",
+          "race_no": 12
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "20",
+          "race_no": 12
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 1
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 2
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 3
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 4
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 5
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 6
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 7
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 8
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 9
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 10
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 11
+        },
+        {
+          "race_date": "2026-09-24",
+          "venue_code": "22",
+          "race_no": 12
+        }
+      ],
+      "invalid_race_size": 0,
+      "invalid_boat_sets": 0,
+      "name_exact_mismatch": 33,
+      "name_expected_abbreviation": 33,
+      "name_unexplained_mismatch": 0,
+      "motor_mismatch": 0,
+      "boat_equipment_mismatch": 0,
+      "special_finish_count": 0,
+      "finish_status_counts": {
+        "CANCELLED": 720,
+        "01": 36,
+        "02": 36,
+        "03": 36,
+        "04": 36,
+        "05": 36,
+        "06": 36
+      },
+      "payout_record_count": 1200,
+      "payout_group_count": 1092,
+      "payout_expected_group_count": 1092,
+      "payout_missing_group_count": 0,
+      "payout_unexpected_group_count": 0,
+      "payout_duplicate_keys": 0,
+      "payout_invalid_combinations": 0,
+      "payout_invalid_amounts": 0,
+      "payout_invalid_popularity": 0,
+      "payout_summary_mismatch": 0,
+      "payout_cancelled_group_count": 840,
+      "payout_not_established_count": 0,
+      "payout_special_count": 0,
+      "payout_status_counts": {
+        "CANCELLED": 840,
+        "NORMAL": 360
+      },
+      "payout_bet_type_counts": {
+        "QUINELLA_PLACE": 228,
+        "PLACE": 192,
+        "WIN": 156,
+        "EXACTA": 156,
+        "QUINELLA": 156,
+        "TRIFECTA": 156,
+        "TRIO": 156
+      },
+      "created_at": "2026-09-24T07:14:32.639500+00:00",
+      "status": "SUCCESS"
+    },
+    "skipped": false
+  }
+}

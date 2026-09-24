@@ -1,0 +1,7 @@
+race_date,attempt,obs_ts_jst,ok,detail
+2026-09-24,1,2026-09-24T16:14:32.913074+09:00,1,"{'paths': {'program': PosixPath('/home/ubuntu/boatrace-ai/data/curated/entries/2026/09/24/program_entries.parquet'), 'result': PosixPath('/home/ubuntu/boatrace-ai/data/curated/results/2026/09/24/race_"
+2026-09-23,1,2026-09-24T18:02:24.424885+09:00,1,"{'paths': {'program': PosixPath('/home/ubuntu/boatrace-ai/data/curated/entries/2026/09/23/program_entries.parquet'), 'result': PosixPath('/home/ubuntu/boatrace-ai/data/curated/results/2026/09/23/race_"
+2026-09-23,1,2026-09-24T18:11:29.117050+09:00,1,"{'paths': {'program': PosixPath('/home/ubuntu/boatrace-ai/data/curated/entries/2026/09/23/program_entries.parquet'), 'result': PosixPath('/home/ubuntu/boatrace-ai/data/curated/results/2026/09/23/race_"
+2026-09-24,1,2026-09-24T20:30:20.958122+09:00,0,120/156,"stable=1; finish_01=120!=race_count=156; cancelled_race=36; payout_cancelled_group=252; result=720!=program=936"
+2026-09-24,2,2026-09-24T20:40:37.959691+09:00,0,132/156,"stable=1; finish_01=132!=race_count=156; cancelled_race=24; payout_cancelled_group=168; result=792!=program=936"
+2026-09-24,3,2026-09-24T20:50:56.019772+09:00,1,156/156,"complete"
