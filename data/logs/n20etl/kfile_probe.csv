@@ -5,3 +5,8 @@ race_date,attempt,obs_ts_jst,ok,detail
 2026-09-24,1,2026-09-24T20:30:20.958122+09:00,0,120/156,"stable=1; finish_01=120!=race_count=156; cancelled_race=36; payout_cancelled_group=252; result=720!=program=936"
 2026-09-24,2,2026-09-24T20:40:37.959691+09:00,0,132/156,"stable=1; finish_01=132!=race_count=156; cancelled_race=24; payout_cancelled_group=168; result=792!=program=936"
 2026-09-24,3,2026-09-24T20:50:56.019772+09:00,1,156/156,"complete"
+2026-09-25,1,2026-09-25T20:30:21.750630+09:00,0,108/144,"stable=1; finish_01=108!=race_count=144; cancelled_race=36; payout_cancelled_group=252; result=648!=program=864"
+2026-09-25,2,2026-09-25T20:35:40.750212+09:00,0,108/144,"stable=2; finish_01=108!=race_count=144; cancelled_race=36; payout_cancelled_group=252; result=648!=program=864"
+2026-09-25,3,2026-09-25T20:40:59.830376+09:00,0,120/144,"stable=1; finish_01=120!=race_count=144; cancelled_race=24; payout_cancelled_group=168; result=720!=program=864"
+2026-09-25,4,2026-09-25T20:46:20.843300+09:00,0,132/144,"stable=1; finish_01=132!=race_count=144; cancelled_race=12; payout_cancelled_group=84; result=792!=program=864"
+2026-09-25,5,2026-09-25T20:51:40.914525+09:00,1,144/144,"complete"
