@@ -1,0 +1,19 @@
+{
+  "days_results": 0,
+  "days_payouts": 1735,
+  "rows": 0,
+  "races": 0,
+  "mismatch": [],
+  "bet_type": {
+    "QUINELLA_PLACE": 794520,
+    "PLACE": 530463,
+    "TRIFECTA": 267446,
+    "QUINELLA": 267371,
+    "EXACTA": 267374,
+    "TRIO": 267432,
+    "WIN": 267363
+  },
+  "per_race": {},
+  "races_with_1_row": 0,
+  "days_single_bet_type": []
+}

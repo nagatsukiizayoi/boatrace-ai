@@ -1,0 +1,11 @@
+{
+  "checked_at": "2026-09-28T00:49:50",
+  "live_days": 5,
+  "n_pairs": 3976,
+  "n_races": 663,
+  "exact_rate": 1.0,
+  "within_0_01_rate": 1.0,
+  "mean_abs_diff": 0.0,
+  "max_abs_diff": 0.0,
+  "verdict": "PASS"
+}

@@ -1,0 +1,14 @@
+{
+  "days_results": 1735,
+  "days_payouts": 1735,
+  "rows": 0,
+  "races": 0,
+  "mismatch": [
+    [
+      "2018-01-09",
+      "NO_KEY cols=['race_date', 'venue_code', 'race_no', 'finish_raw', 'boat_no', 'racer_id', 'racer_name_result', 'motor_no_result']"
+    ]
+  ],
+  "per_race": {},
+  "races_with_1_row": 0
+}

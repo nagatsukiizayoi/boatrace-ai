@@ -1,0 +1,10 @@
+{
+  "results_races": 263937,
+  "payouts_races": 267360,
+  "payout_only": 3423,
+  "result_only": 0,
+  "payout_only_status": {
+    "CANCELLED": 23961
+  },
+  "rows_ge13_races": 86
+}

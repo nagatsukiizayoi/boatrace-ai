@@ -1,0 +1,20 @@
+{
+  "days": 1735,
+  "rows": 1583622,
+  "races": 263937,
+  "boats_per_race": {
+    "6": 263937
+  },
+  "exhibition_time_na": 3513,
+  "mismatch": [],
+  "payout_rows": 2661969,
+  "payout_per_race": {
+    "10": 262663,
+    "7": 3527,
+    "14": 83,
+    "9": 777,
+    "8": 307,
+    "13": 3
+  },
+  "races_with_1_row": 0
+}
