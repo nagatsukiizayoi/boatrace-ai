@@ -1,0 +1,13 @@
+{
+ "run_id": "150959",
+ "hd": "20261004",
+ "rows": 48,
+ "tasks": 8,
+ "lag_min": 56.7,
+ "lag_max": 627.5,
+ "lag_le0": 0,
+ "win_cov": 0.875,
+ "q3t_cov": 1.0,
+ "exh_cov": 1.0,
+ "elapsed_s": 384.1
+}
