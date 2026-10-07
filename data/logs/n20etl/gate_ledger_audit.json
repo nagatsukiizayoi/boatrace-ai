@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "today": "2026-10-06",
+  "today": "2026-10-07",
   "dir": "/home/ubuntu/boatrace-ai/data/logs/n20etl",
   "gated": {
     "2026-09-24": {
@@ -170,6 +170,20 @@
       "finish_total": 864,
       "finish_1_6": 779,
       "finish_other": 85
+    },
+    "2026-10-06": {
+      "kind": "GATED",
+      "race_date": "2026-10-06",
+      "mode": "SUCCESS",
+      "race_count": 156,
+      "record_count": 936,
+      "cancelled": 0,
+      "payout": 1560,
+      "attempt": 30,
+      "first_success_jst": "2026-10-06T23:04:10.848735+09:00",
+      "finish_total": 936,
+      "finish_1_6": 927,
+      "finish_other": 9
     }
   },
   "legacy": [
@@ -186,7 +200,7 @@
     }
   ],
   "missing": [
-    "2026-10-06"
+    "2026-10-07"
   ],
   "unrecoverable": [],
   "status": "NG"
