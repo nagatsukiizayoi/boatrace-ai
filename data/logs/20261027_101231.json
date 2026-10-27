@@ -1,0 +1,13 @@
+{
+ "run_id": "101231",
+ "hd": "20261027",
+ "rows": 30,
+ "tasks": 5,
+ "lag_min": 79.3,
+ "lag_max": 708.0,
+ "lag_le0": 0,
+ "win_cov": 0.8,
+ "q3t_cov": 1.0,
+ "exh_cov": 1.0,
+ "elapsed_s": 359.9
+}
