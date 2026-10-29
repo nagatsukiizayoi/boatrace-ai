@@ -1,0 +1,25 @@
+{
+  "race_date": "2026-10-28",
+  "attempt": 30,
+  "first_success_jst": "2026-10-28T23:04:17.238352+09:00",
+  "mode": "SUCCESS_STABLE",
+  "reason": "unchanged x23 after 23:00; finish_01=125!=race_count=132; cancelled_race=7; payout_cancelled_group=49; result=750!=program=792",
+  "race_count": 132,
+  "record_count": 792,
+  "payout_record_count": 1297,
+  "cancelled_race_count": 7,
+  "finish_status_counts": {
+    "02": 125,
+    "01": 125,
+    "04": 124,
+    "03": 124,
+    "05": 123,
+    "06": 116,
+    "CANCELLED": 42,
+    "S1": 5,
+    "S0": 5,
+    "S2": 1,
+    "K0": 1,
+    "F": 1
+  }
+}

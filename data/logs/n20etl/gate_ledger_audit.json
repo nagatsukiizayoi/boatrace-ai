@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "today": "2026-10-28",
+  "today": "2026-10-29",
   "dir": "/home/ubuntu/boatrace-ai/data/logs/n20etl",
   "gated": {
     "2026-09-24": {
@@ -478,6 +478,20 @@
       "finish_total": 1008,
       "finish_1_6": 998,
       "finish_other": 10
+    },
+    "2026-10-28": {
+      "kind": "GATED",
+      "race_date": "2026-10-28",
+      "mode": "SUCCESS_STABLE",
+      "race_count": 132,
+      "record_count": 792,
+      "cancelled": 7,
+      "payout": 1297,
+      "attempt": 30,
+      "first_success_jst": "2026-10-28T23:04:17.238352+09:00",
+      "finish_total": 792,
+      "finish_1_6": 737,
+      "finish_other": 55
     }
   },
   "legacy": [
@@ -499,10 +513,14 @@
     {
       "file": "etl_success_2026-10-25.json",
       "msg": "mode=SUCCESS_STABLE (SUCCESS ではない) reason=unchanged x25 after 23:00; finish_01=156!=race_count=168; cancelled_race=12; payout_cancelled_group=84; result=936!=program=1008"
+    },
+    {
+      "file": "etl_success_2026-10-28.json",
+      "msg": "mode=SUCCESS_STABLE (SUCCESS ではない) reason=unchanged x23 after 23:00; finish_01=125!=race_count=132; cancelled_race=7; payout_cancelled_group=49; result=750!=program=792"
     }
   ],
   "missing": [
-    "2026-10-28"
+    "2026-10-29"
   ],
   "unrecoverable": [],
   "status": "NG"
