@@ -1,0 +1,24 @@
+{
+  "race_date": "2026-11-01",
+  "attempt": 29,
+  "first_success_jst": "2026-11-01T22:59:06.528836+09:00",
+  "mode": "SUCCESS",
+  "reason": "all gates passed",
+  "race_count": 168,
+  "record_count": 1008,
+  "payout_record_count": 1680,
+  "cancelled_race_count": 0,
+  "finish_status_counts": {
+    "01": 168,
+    "02": 168,
+    "03": 168,
+    "04": 168,
+    "05": 167,
+    "06": 159,
+    "F": 3,
+    "S0": 3,
+    "S1": 2,
+    "S2": 1,
+    "K0": 1
+  }
+}
